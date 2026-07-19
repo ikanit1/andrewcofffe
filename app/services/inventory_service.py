@@ -1,0 +1,59 @@
+from sqlalchemy.orm import Session
+
+from app.models import Ingredient, StockMove
+
+
+def apply_move(
+    session: Session,
+    ingredient_id: int,
+    *,
+    qty_delta: int,
+    kind: str,
+    ref_type: str | None = None,
+    ref_id: int | None = None,
+    note: str | None = None,
+    commit: bool = True,
+) -> StockMove:
+    """Единственная точка изменения остатка: журнал + кэш в одной транзакции."""
+    ing = session.get(Ingredient, ingredient_id)
+    if ing is None:
+        raise ValueError(f"Позиция склада {ingredient_id} не найдена")
+    move = StockMove(
+        ingredient_id=ingredient_id,
+        qty_delta=qty_delta,
+        kind=kind,
+        ref_type=ref_type,
+        ref_id=ref_id,
+        note=note,
+    )
+    ing.stock_qty += qty_delta
+    session.add(move)
+    if commit:
+        session.commit()
+    return move
+
+
+def receive_purchase(
+    session: Session, ingredient_id: int, *, qty: int, total_cost_tiyn: int
+) -> None:
+    """Приход: остаток растёт, себестоимость пересчитывается средневзвешенно."""
+    if qty <= 0:
+        raise ValueError("Количество прихода должно быть больше нуля")
+    if total_cost_tiyn < 0:
+        raise ValueError("Сумма прихода не может быть отрицательной")
+    ing = session.get(Ingredient, ingredient_id)
+    if ing is None:
+        raise ValueError(f"Позиция склада {ingredient_id} не найдена")
+
+    old_qty = max(ing.stock_qty, 0)  # отрицательный остаток не должен ломать среднюю
+    new_total_qty = old_qty + qty
+    ing.avg_cost_tiyn = (old_qty * ing.avg_cost_tiyn + total_cost_tiyn) / new_total_qty
+    apply_move(
+        session,
+        ingredient_id,
+        qty_delta=qty,
+        kind="purchase",
+        note=f"total_cost_tiyn={total_cost_tiyn}",
+        commit=False,
+    )
+    session.commit()
