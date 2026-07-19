@@ -4,7 +4,7 @@ from app.db import Base
 
 def test_settings_defaults(monkeypatch):
     monkeypatch.delenv("DATABASE_URL", raising=False)
-    s = Settings(_env_file=None, BOT_TOKEN="x")
+    s = Settings(_env_file=None, bot_token="x")
     assert s.database_url == "sqlite:///pos.db"
 
 
