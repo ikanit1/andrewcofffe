@@ -9,12 +9,17 @@ def apply_move(
     *,
     qty_delta: int,
     kind: str,
+    cost_tiyn: int | None = None,
     ref_type: str | None = None,
     ref_id: int | None = None,
     note: str | None = None,
-    commit: bool = True,
+    commit: bool = False,
 ) -> StockMove:
-    """Единственная точка изменения остатка: журнал + кэш в одной транзакции."""
+    """Единственная точка изменения остатка: журнал + кэш в одной транзакции.
+
+    Коммитит владелец транзакции: по умолчанию делается только flush,
+    session.commit() — забота вызывающего кода (или commit=True явно).
+    """
     ing = session.get(Ingredient, ingredient_id)
     if ing is None:
         raise ValueError(f"Позиция склада {ingredient_id} не найдена")
@@ -22,12 +27,15 @@ def apply_move(
         ingredient_id=ingredient_id,
         qty_delta=qty_delta,
         kind=kind,
+        cost_tiyn=cost_tiyn,
         ref_type=ref_type,
         ref_id=ref_id,
         note=note,
     )
-    ing.stock_qty += qty_delta
+    # атомарный UPDATE ... SET stock_qty = stock_qty + qty_delta (без гонок на уровне БД)
+    ing.stock_qty = Ingredient.stock_qty + qty_delta
     session.add(move)
+    session.flush()
     if commit:
         session.commit()
     return move
@@ -53,7 +61,7 @@ def receive_purchase(
         ingredient_id,
         qty_delta=qty,
         kind="purchase",
-        note=f"total_cost_tiyn={total_cost_tiyn}",
+        cost_tiyn=total_cost_tiyn,
         commit=False,
     )
     session.commit()

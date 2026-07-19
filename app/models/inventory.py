@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import ForeignKey
+from sqlalchemy import DateTime, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -28,6 +28,7 @@ class RecipeItem(Base):
     """Строка тех-карты: сколько ингредиента уходит на 1 порцию товара."""
 
     __tablename__ = "recipe_items"
+    __table_args__ = (UniqueConstraint("product_id", "ingredient_id"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     product_id: Mapped[int] = mapped_column(ForeignKey("products.id"))
@@ -44,7 +45,8 @@ class StockMove(Base):
     ingredient_id: Mapped[int] = mapped_column(ForeignKey("ingredients.id"), index=True)
     qty_delta: Mapped[int]  # + приход, − списание
     kind: Mapped[str]  # "purchase" | "sale" | "refund" | "adjustment"
+    cost_tiyn: Mapped[int | None] = mapped_column(default=None)  # стоимость движения в тиынах
     ref_type: Mapped[str | None] = mapped_column(default=None)  # напр. "order"
     ref_id: Mapped[int | None] = mapped_column(default=None)
     note: Mapped[str | None] = mapped_column(default=None)
-    created_at: Mapped[datetime] = mapped_column(default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

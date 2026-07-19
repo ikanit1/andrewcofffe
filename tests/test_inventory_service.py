@@ -31,6 +31,7 @@ def test_apply_move_writes_journal_and_cache(session):
     milk = _milk(session)
     inv.receive_purchase(session, milk.id, qty=10000, total_cost_tiyn=500000)
     inv.apply_move(session, milk.id, qty_delta=-200, kind="sale", ref_type="order", ref_id=1)
+    session.commit()  # apply_move больше не коммитит по умолчанию — коммитит вызывающий
     assert milk.stock_qty == 9800
     moves = session.query(StockMove).filter_by(ingredient_id=milk.id).all()
     assert [m.kind for m in moves] == ["purchase", "sale"]
