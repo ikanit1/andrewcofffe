@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     bot_token: str = ""
     database_url: str = "sqlite:///pos.db"
     public_url: str = "http://localhost:8080"
+    storage_secret: str = "change-me-in-env"
 
 
 settings = Settings()

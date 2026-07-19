@@ -32,6 +32,16 @@ def test_wrong_token_rejected():
     assert validate_init_data(init, "другой:токен") is None
 
 
+def test_missing_hash_rejected():
+    init = urlencode({"auth_date": "1752900000"})
+    assert validate_init_data(init, TOKEN) is None
+
+
+def test_garbage_hash_rejected():
+    init = urlencode({"auth_date": "1752900000", "hash": "ЮЮ"})
+    assert validate_init_data(init, TOKEN) is None
+
+
 def test_pin_hash_roundtrip():
     h = hash_pin("4821")
     assert verify_pin("4821", h)
