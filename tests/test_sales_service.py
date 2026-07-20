@@ -8,6 +8,8 @@ from app.models import (
     Payment,
     Product,
     RecipeItem,
+    Refund,
+    RefundItem,
     StockMove,
     User,
 )
@@ -119,3 +121,52 @@ def test_sale_requires_open_shift(session):
     with pytest.raises(ValueError):
         sales.create_sale(session, cashier_id=cashier.id, lines=[_line(latte.id)],
                           payments=[PaymentInput("cash", 150000, 150000)])
+
+
+def test_full_refund_marks_order_and_restocks_retail(session):
+    cashier = User(telegram_id=2, name="Кассир", role="cashier")
+    session.add(cashier)
+    cat = Category(name="Снеки")
+    session.add(cat)
+    session.flush()
+    cro = Ingredient(name="Круассан", unit="шт", stock_qty=10, avg_cost_tiyn=45000.0)
+    session.add(cro)
+    session.flush()
+    prod = Product(name="Круассан", category_id=cat.id, kind="retail",
+                   price_tiyn=90000, ingredient_id=cro.id)
+    session.add(prod)
+    session.commit()
+    ss.open_shift(session, cashier_id=cashier.id, opening_cash_tiyn=0)
+    order = sales.create_sale(session, cashier_id=cashier.id,
+                              lines=[_line(prod.id, qty=2)],
+                              payments=[PaymentInput("cash", 180000, 180000)])
+    assert session.get(Ingredient, cro.id).stock_qty == 8
+
+    refund = sales.refund_sale(session, order_id=order.id, cashier_id=cashier.id,
+                               reason="передумал", item_qty=None)
+    assert refund.amount_tiyn == 180000
+    assert session.get(Order, order.id).status == "refunded"
+    assert session.get(Ingredient, cro.id).stock_qty == 10
+
+
+def test_partial_refund_sets_partial_status(session):
+    cashier, latte, milk, beans, shift = _setup(session)
+    order = sales.create_sale(session, cashier_id=cashier.id, lines=[_line(latte.id, qty=3)],
+                              payments=[PaymentInput("cash", 450000, 450000)])
+    item = session.query(OrderItem).filter_by(order_id=order.id).one()
+    refund = sales.refund_sale(session, order_id=order.id, cashier_id=cashier.id,
+                               reason="одну убрать", item_qty={item.id: 1})
+    assert refund.amount_tiyn == 150000
+    assert session.get(Order, order.id).status == "partially_refunded"
+    assert session.get(OrderItem, item.id).refunded_qty == 1
+    assert session.get(Ingredient, milk.id).stock_qty == 1000 - 600
+
+
+def test_cannot_refund_more_than_bought(session):
+    cashier, latte, milk, beans, shift = _setup(session)
+    order = sales.create_sale(session, cashier_id=cashier.id, lines=[_line(latte.id, qty=1)],
+                              payments=[PaymentInput("cash", 150000, 150000)])
+    item = session.query(OrderItem).filter_by(order_id=order.id).one()
+    with pytest.raises(ValueError):
+        sales.refund_sale(session, order_id=order.id, cashier_id=cashier.id,
+                          reason="слишком много", item_qty={item.id: 5})

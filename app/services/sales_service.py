@@ -12,6 +12,8 @@ from app.models import (
     Payment,
     Product,
     RecipeItem,
+    Refund,
+    RefundItem,
     User,
 )
 from app.services import costing, pricing
@@ -164,3 +166,69 @@ def _deduct_stock(session: Session, product: Product, mods, qty: int, order_id: 
         from app.models import ModifierItem
         for mi in session.scalars(select(ModifierItem).where(ModifierItem.modifier_id == m.id)).all():
             move(mi.ingredient_id, mi.qty)
+
+
+def refund_sale(
+    session: Session,
+    *,
+    order_id: int,
+    cashier_id: int,
+    reason: str,
+    item_qty: dict[int, int] | None = None,
+) -> Refund:
+    """Возврат. item_qty=None — полный возврат всех оставшихся позиций.
+
+    Штучные (retail) позиции возвращаются на склад; приготовленные — нет.
+    """
+    if not reason or not reason.strip():
+        raise ValueError("Причина возврата обязательна")
+    order = session.get(Order, order_id)
+    if order is None:
+        raise ValueError(f"Заказ {order_id} не найден")
+    if order.status == "refunded":
+        raise ValueError("Заказ уже полностью возвращён")
+
+    items = session.scalars(select(OrderItem).where(OrderItem.order_id == order_id)).all()
+    by_id = {it.id: it for it in items}
+
+    if item_qty is None:
+        plan = {it.id: it.qty - it.refunded_qty for it in items if it.qty - it.refunded_qty > 0}
+    else:
+        plan = {}
+        for item_id, q in item_qty.items():
+            it = by_id.get(item_id)
+            if it is None:
+                raise ValueError(f"Позиция {item_id} не в этом заказе")
+            if q <= 0 or q > it.qty - it.refunded_qty:
+                raise ValueError("Некорректное количество возврата")
+            plan[item_id] = q
+
+    if not plan:
+        raise ValueError("Нечего возвращать")
+
+    refund = Refund(order_id=order_id, amount_tiyn=0, reason=reason.strip(), cashier_id=cashier_id)
+    session.add(refund)
+    session.flush()
+
+    refunded_amount = 0
+    for item_id, q in plan.items():
+        it = by_id[item_id]
+        unit_net = it.line_total_tiyn // it.qty  # цена единицы после позиционной скидки
+        item_amount = unit_net * q
+        refunded_amount += item_amount
+        it.refunded_qty += q
+        session.add(RefundItem(refund_id=refund.id, order_item_id=item_id, qty=q,
+                               amount_tiyn=item_amount))
+        product = session.get(Product, it.product_id) if it.product_id else None
+        if product is not None and product.kind == "retail" and product.ingredient_id is not None:
+            apply_move(
+                session, product.ingredient_id,
+                qty_delta=q, kind="refund",
+                ref_type="order", ref_id=order_id, commit=False,
+            )
+
+    refund.amount_tiyn = refunded_amount
+    all_refunded = all(it.refunded_qty >= it.qty for it in items)
+    order.status = "refunded" if all_refunded else "partially_refunded"
+    session.commit()
+    return refund
