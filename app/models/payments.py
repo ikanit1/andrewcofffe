@@ -37,3 +37,4 @@ class RefundItem(Base):
     refund_id: Mapped[int] = mapped_column(ForeignKey("refunds.id"), index=True)
     order_item_id: Mapped[int | None] = mapped_column(ForeignKey("order_items.id"), default=None)
     qty: Mapped[int]
+    amount_tiyn: Mapped[int | None] = mapped_column(default=None)  # сумма возврата по строке

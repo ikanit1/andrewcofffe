@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey
+from sqlalchemy import DateTime, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -11,6 +11,7 @@ class Order(Base):
     """Оплаченный чек. Корзина редактируется в UI; в БД заказ уже проведён."""
 
     __tablename__ = "orders"
+    __table_args__ = (UniqueConstraint("shift_id", "number"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     shift_id: Mapped[int] = mapped_column(ForeignKey("shifts.id"), index=True)
