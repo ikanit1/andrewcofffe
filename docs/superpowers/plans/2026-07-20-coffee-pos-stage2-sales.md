@@ -231,7 +231,7 @@ Expected: FAIL — ImportError
 ```python
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey
+from sqlalchemy import DateTime, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -242,6 +242,7 @@ class Order(Base):
     """Оплаченный чек. Корзина редактируется в UI; в БД заказ уже проведён."""
 
     __tablename__ = "orders"
+    __table_args__ = (UniqueConstraint("shift_id", "number"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     shift_id: Mapped[int] = mapped_column(ForeignKey("shifts.id"), index=True)
@@ -378,6 +379,7 @@ class RefundItem(Base):
     refund_id: Mapped[int] = mapped_column(ForeignKey("refunds.id"), index=True)
     order_item_id: Mapped[int | None] = mapped_column(ForeignKey("order_items.id"), default=None)
     qty: Mapped[int]
+    amount_tiyn: Mapped[int | None] = mapped_column(default=None)  # сумма возврата по строке
 ```
 
 `app/models/__init__.py` — добавить `from app.models.payments import Payment, Refund, RefundItem` и три имени в `__all__`.
@@ -1361,9 +1363,11 @@ def refund_sale(
     for item_id, q in plan.items():
         it = by_id[item_id]
         unit_net = it.line_total_tiyn // it.qty  # цена единицы после позиционной скидки
-        refunded_amount += unit_net * q
+        item_amount = unit_net * q
+        refunded_amount += item_amount
         it.refunded_qty += q
-        session.add(RefundItem(refund_id=refund.id, order_item_id=item_id, qty=q))
+        session.add(RefundItem(refund_id=refund.id, order_item_id=item_id, qty=q,
+                               amount_tiyn=item_amount))
         # возврат штучного товара на склад
         product = session.get(Product, it.product_id) if it.product_id else None
         if product is not None and product.kind == "retail" and product.ingredient_id is not None:
