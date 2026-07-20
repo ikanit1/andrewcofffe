@@ -25,6 +25,8 @@ def create_app(start_bot: bool = True) -> FastAPI:
             bot_task.cancel()
 
     app = FastAPI(title="Coffee POS", lifespan=lifespan)
+    if settings.storage_secret == "change-me-in-env":
+        logger.warning("storage_secret не задан (дефолт) — сессии подделываемы; задайте STORAGE_SECRET в .env")
     init_db()
 
     @app.get("/health")
@@ -48,5 +50,10 @@ def _log_bot_exit(task: asyncio.Task) -> None:
 
 if __name__ == "__main__":
     import uvicorn
+
+    from app.config import settings
+
+    if settings.storage_secret == "change-me-in-env":
+        raise SystemExit("Задайте STORAGE_SECRET в .env перед запуском (сейчас дефолтное значение).")
 
     uvicorn.run("app.main:create_app", factory=True, host="0.0.0.0", port=8080)

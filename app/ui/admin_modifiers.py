@@ -41,6 +41,9 @@ def admin_modifiers_page() -> None:
                         if not name.value:
                             ui.notify("Введите название", color="red")
                             return
+                        if ing.value and (not qty.value or round(qty.value) < 1):
+                            ui.notify("Укажите количество списания ≥ 1", color="red")
+                            return
                         try:
                             with SessionLocal() as s:
                                 mod = ms.add_modifier(s, group_id=gid, name=name.value,
@@ -89,8 +92,12 @@ def admin_modifiers_page() -> None:
             if not (ps.value and gs.value):
                 ui.notify("Выберите товар и группу", color="red")
                 return
-            with SessionLocal() as s:
-                ms.attach_group(s, product_id=ps.value, group_id=gs.value)
+            try:
+                with SessionLocal() as s:
+                    ms.attach_group(s, product_id=ps.value, group_id=gs.value)
+            except (ValueError, IntegrityError) as e:
+                ui.notify(str(e), color="red")
+                return
             ui.notify("Привязано")
 
         ui.button("Привязать", on_click=do_attach)

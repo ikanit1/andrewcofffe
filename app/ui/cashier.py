@@ -21,8 +21,12 @@ def cashier_page() -> None:
         cash = ui.number("Стартовая наличность, тг", value=0, min=0, format="%.0f")
 
         def do_open() -> None:
-            with SessionLocal() as s:
-                ss.open_shift(s, cashier_id=uid, opening_cash_tiyn=round((cash.value or 0) * 100))
+            try:
+                with SessionLocal() as s:
+                    ss.open_shift(s, cashier_id=uid, opening_cash_tiyn=round((cash.value or 0) * 100))
+            except ValueError as e:
+                ui.notify(str(e), color="red")
+                return
             ui.navigate.to("/cashier")
 
         ui.button("Открыть смену", on_click=do_open)
@@ -44,7 +48,7 @@ def cashier_page() -> None:
                 ui.notify(str(e), color="red")
                 return
             ui.notify("Инкассация записана")
-            amt.value = 0
+            ui.navigate.to("/cashier")
 
         ui.button("Изъять", on_click=do_collect)
 
@@ -55,9 +59,13 @@ def cashier_page() -> None:
         counted = ui.number("Фактически в кассе, тг", value=expected / 100, min=0, format="%.0f")
 
         def do_close() -> None:
-            with SessionLocal() as s:
-                closed = ss.close_shift(s, shift_id=shift.id,
-                                        counted_cash_tiyn=round((counted.value or 0) * 100))
+            try:
+                with SessionLocal() as s:
+                    closed = ss.close_shift(s, shift_id=shift.id,
+                                            counted_cash_tiyn=round((counted.value or 0) * 100))
+            except ValueError as e:
+                ui.notify(str(e), color="red")
+                return
             diff = (closed.counted_cash_tiyn - closed.expected_cash_tiyn) / 100
             ui.notify(f"Смена закрыта. Расхождение: {diff:+.0f} тг")
             ui.navigate.to("/cashier")
