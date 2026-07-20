@@ -4,7 +4,10 @@ from app.models import (
     Order,
     OrderItem,
     OrderItemModifier,
+    Payment,
     Product,
+    Refund,
+    RefundItem,
     Shift,
     User,
 )
@@ -75,3 +78,25 @@ def test_order_items_and_modifiers(session):
     mod = session.query(OrderItemModifier).one()
     assert mod.name == "L"
     assert mod.price_delta_tiyn == 20000
+
+
+def test_payment_and_refund(session):
+    order = _paid_order(session)
+    session.add_all([
+        Payment(order_id=order.id, method="cash", amount_tiyn=100000,
+                tendered_tiyn=200000, change_tiyn=100000),
+        Payment(order_id=order.id, method="kaspi_qr", amount_tiyn=70000),
+    ])
+    session.flush()
+    refund = Refund(order_id=order.id, amount_tiyn=70000, reason="брак", cashier_id=order.shift_id)
+    session.add(refund)
+    session.flush()
+    session.add(RefundItem(refund_id=refund.id, order_item_id=None, qty=1))
+    session.commit()
+
+    pays = session.query(Payment).order_by(Payment.id).all()
+    assert [p.method for p in pays] == ["cash", "kaspi_qr"]
+    assert pays[0].change_tiyn == 100000
+    assert pays[1].tendered_tiyn is None
+    assert session.query(Refund).one().reason == "брак"
+    assert session.query(RefundItem).one().qty == 1

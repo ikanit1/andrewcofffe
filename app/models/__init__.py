@@ -8,6 +8,7 @@ from app.models.catalog import (
 )
 from app.models.inventory import Ingredient, RecipeItem, StockMove
 from app.models.orders import Order, OrderItem, OrderItemModifier
+from app.models.payments import Payment, Refund, RefundItem
 from app.models.shifts import CashCollection, Shift
 from app.models.users import User
 
@@ -21,9 +22,12 @@ __all__ = [
     "Order",
     "OrderItem",
     "OrderItemModifier",
+    "Payment",
     "Product",
     "ProductModifierGroup",
     "RecipeItem",
+    "Refund",
+    "RefundItem",
     "Shift",
     "StockMove",
     "User",
