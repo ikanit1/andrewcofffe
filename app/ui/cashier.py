@@ -6,6 +6,7 @@ from app.services import modifier_service as ms
 from app.services import sales_service as sales
 from app.services.catalog_service import list_menu
 from app.services.pricing import PaymentInput
+from app.models import Order, OrderItem
 from app.ui.guard import current_user_id, require_user
 
 
@@ -38,6 +39,7 @@ def cashier_page() -> None:
 
     ui.label(f"Смена открыта (№{shift.id})").classes("text-lg text-green-700")
     ui.button("Экран продажи", on_click=lambda: ui.navigate.to("/cashier/sale"))
+    ui.button("Возвраты", on_click=lambda: ui.navigate.to("/cashier/refunds"))
 
     with ui.expansion("Инкассация").classes("w-full max-w-md"):
         amt = ui.number("Сумма изъятия, тг", value=0, min=0, format="%.0f")
@@ -225,3 +227,61 @@ def sale_page() -> None:
 
     ui.button("← К смене", on_click=lambda: ui.navigate.to("/cashier"))
     render_cart()
+
+
+@ui.page("/cashier/refunds")
+def refunds_page() -> None:
+    if not require_user():
+        return
+    uid = current_user_id()
+
+    ui.label("Возвраты").classes("text-2xl font-bold")
+    box = ui.column().classes("w-full max-w-2xl gap-2")
+
+    def refresh() -> None:
+        box.clear()
+        with box, SessionLocal() as session:
+            shift = ss.current_open_shift(session)
+            if shift is None:
+                ui.label("Смена не открыта").classes("text-red-600")
+                return
+            orders = session.query(Order).filter(
+                Order.shift_id == shift.id,
+                Order.status.in_(["paid", "partially_refunded"]),
+            ).order_by(Order.number.desc()).all()
+            if not orders:
+                ui.label("Нет заказов для возврата").classes("text-gray-500")
+            for o in orders:
+                items = session.query(OrderItem).filter_by(order_id=o.id).all()
+                names = ", ".join(f"{it.name}×{it.qty - it.refunded_qty}"
+                                  for it in items if it.qty - it.refunded_qty > 0)
+                with ui.row().classes("items-center gap-3"):
+                    ui.label(f"№{o.number}: {names} — {o.total_tiyn/100:.0f} тг").classes("flex-1")
+                    ui.button("Вернуть полностью",
+                              on_click=lambda oid=o.id: _do_full_refund(oid))
+
+    def _do_full_refund(order_id: int) -> None:
+        with ui.dialog() as dialog, ui.card():
+            ui.label("Причина возврата").classes("text-lg")
+            reason = ui.input("Причина")
+
+            def confirm() -> None:
+                if not reason.value or not reason.value.strip():
+                    ui.notify("Укажите причину", color="red")
+                    return
+                try:
+                    with SessionLocal() as s:
+                        sales.refund_sale(s, order_id=order_id, cashier_id=uid,
+                                          reason=reason.value, item_qty=None)
+                except ValueError as e:
+                    ui.notify(str(e), color="red")
+                    return
+                dialog.close()
+                ui.notify("Возврат оформлен", color="green")
+                refresh()
+
+            ui.button("Подтвердить возврат", on_click=confirm, color="red")
+            ui.button("Отмена", on_click=dialog.close)
+        dialog.open()
+
+    refresh()
