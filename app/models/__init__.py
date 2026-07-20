@@ -7,6 +7,7 @@ from app.models.catalog import (
     ProductModifierGroup,
 )
 from app.models.inventory import Ingredient, RecipeItem, StockMove
+from app.models.orders import Order, OrderItem, OrderItemModifier
 from app.models.shifts import CashCollection, Shift
 from app.models.users import User
 
@@ -17,6 +18,9 @@ __all__ = [
     "Modifier",
     "ModifierGroup",
     "ModifierItem",
+    "Order",
+    "OrderItem",
+    "OrderItemModifier",
     "Product",
     "ProductModifierGroup",
     "RecipeItem",
