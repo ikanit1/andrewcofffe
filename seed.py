@@ -43,4 +43,7 @@ def seed(admin_telegram_id: int) -> None:
 
 
 if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print("Использование: python seed.py <telegram_id_админа>")
+        sys.exit(1)
     seed(int(sys.argv[1]))

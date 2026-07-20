@@ -1,5 +1,6 @@
 from nicegui import ui
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.db import SessionLocal
 from app.models import Ingredient, Product, RecipeItem
@@ -32,6 +33,15 @@ def admin_stock_page() -> None:
             ]
             ui.table(columns=columns, rows=data).classes("w-full")
 
+    def reload_ing_options() -> None:
+        with SessionLocal() as session:
+            sel_ing.set_options(
+                {
+                    i.id: f"{i.name} ({i.unit})"
+                    for i in session.scalars(select(Ingredient).where(Ingredient.is_active)).all()
+                }
+            )
+
     with ui.expansion("Добавить позицию склада").classes("w-full max-w-3xl"):
         n = ui.input("Название (напр. Молоко)")
         u = ui.select({"г": "граммы", "мл": "миллилитры", "шт": "штуки"}, label="Единица", value="мл")
@@ -41,10 +51,18 @@ def admin_stock_page() -> None:
             if not n.value:
                 return
             with SessionLocal() as s:
-                s.add(Ingredient(name=n.value, unit=u.value, low_stock_threshold=int(t.value or 0)))
-                s.commit()
+                try:
+                    s.add(
+                        Ingredient(name=n.value, unit=u.value, low_stock_threshold=int(t.value or 0))
+                    )
+                    s.commit()
+                except IntegrityError as e:
+                    s.rollback()
+                    ui.notify(str(e), color="red")
+                    return
             n.value = ""
             refresh_ingredients()
+            reload_ing_options()
 
         ui.button("Добавить", on_click=add_ing)
 
@@ -55,7 +73,9 @@ def admin_stock_page() -> None:
     with SessionLocal() as session:
         prod_options = {
             p.id: p.name
-            for p in session.scalars(select(Product).where(Product.kind == "prepared")).all()
+            for p in session.scalars(
+                select(Product).where(Product.kind == "prepared", Product.is_active)
+            ).all()
         }
         ing_options = {
             i.id: f"{i.name} ({i.unit})"
@@ -89,21 +109,29 @@ def admin_stock_page() -> None:
 
     with ui.row().classes("items-end gap-4"):
         sel_ing = ui.select(ing_options, label="Ингредиент")
-        qty = ui.number(label="Кол-во на порцию", value=0, min=1, format="%.0f")
+        qty = ui.number(label="Кол-во на порцию", value=1, min=1, format="%.0f")
 
         def add_line() -> None:
-            if not (sel_product.value and sel_ing.value and qty.value):
-                ui.notify("Выберите товар, ингредиент и количество", color="red")
+            if not (sel_product.value and sel_ing.value):
+                ui.notify("Выберите товар и ингредиент", color="red")
+                return
+            if qty.value is None or qty.value <= 0:
+                ui.notify("Введите количество", color="red")
                 return
             with SessionLocal() as s:
-                s.add(
-                    RecipeItem(
-                        product_id=sel_product.value,
-                        ingredient_id=sel_ing.value,
-                        qty=int(qty.value),
+                try:
+                    s.add(
+                        RecipeItem(
+                            product_id=sel_product.value,
+                            ingredient_id=sel_ing.value,
+                            qty=round(qty.value),
+                        )
                     )
-                )
-                s.commit()
+                    s.commit()
+                except IntegrityError as e:
+                    s.rollback()
+                    ui.notify(str(e), color="red")
+                    return
             refresh_recipe()
 
         ui.button("Добавить в тех-карту", on_click=add_line)

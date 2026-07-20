@@ -1,4 +1,5 @@
 from nicegui import ui
+from sqlalchemy.exc import IntegrityError
 
 from app.db import SessionLocal
 from app.services import catalog_service as cs
@@ -26,18 +27,44 @@ def admin_menu_page() -> None:
                         )
 
                         def save(pid=p.id, field=price) -> None:
+                            if field.value is None or field.value <= 0:
+                                ui.notify("Введите цену", color="red")
+                                return
                             with SessionLocal() as s:
-                                cs.update_product(s, pid, price_tiyn=int(field.value * 100))
+                                try:
+                                    cs.update_product(s, pid, price_tiyn=round(field.value * 100))
+                                except (ValueError, IntegrityError) as e:
+                                    s.rollback()
+                                    ui.notify(str(e), color="red")
+                                    return
                             ui.notify("Цена сохранена")
 
                         ui.button("Сохранить", on_click=save)
 
-                        def deactivate(pid=p.id) -> None:
-                            with SessionLocal() as s:
-                                cs.update_product(s, pid, is_active=False)
-                            refresh()
+                        def deactivate(pid=p.id, pname=p.name) -> None:
+                            with ui.dialog() as dialog, ui.card():
+                                ui.label(f"Убрать «{pname}» из меню?")
+                                with ui.row():
+                                    def do_remove() -> None:
+                                        with SessionLocal() as s:
+                                            try:
+                                                cs.update_product(s, pid, is_active=False)
+                                            except (ValueError, IntegrityError) as e:
+                                                s.rollback()
+                                                ui.notify(str(e), color="red")
+                                                return
+                                        dialog.close()
+                                        refresh()
+
+                                    ui.button("Убрать", on_click=do_remove, color="red")
+                                    ui.button("Отмена", on_click=dialog.close)
+                            dialog.open()
 
                         ui.button("Убрать", on_click=deactivate, color="red")
+
+    def reload_cat_options() -> None:
+        with SessionLocal() as session:
+            p_cat.set_options({c.id: c.name for c, _ in cs.list_menu(session)})
 
     with ui.expansion("Добавить категорию").classes("w-full max-w-3xl"):
         cat_name = ui.input("Название категории")
@@ -46,9 +73,15 @@ def admin_menu_page() -> None:
             if not cat_name.value:
                 return
             with SessionLocal() as s:
-                cs.create_category(s, cat_name.value)
+                try:
+                    cs.create_category(s, cat_name.value)
+                except (ValueError, IntegrityError) as e:
+                    s.rollback()
+                    ui.notify(str(e), color="red")
+                    return
             cat_name.value = ""
             refresh()
+            reload_cat_options()
 
         ui.button("Добавить", on_click=add_category)
 
@@ -61,17 +94,25 @@ def admin_menu_page() -> None:
         p_price = ui.number(label="Цена, тг", value=0, min=1, format="%.0f")
 
         def add_product() -> None:
-            if not (p_name.value and p_cat.value and p_price.value):
+            if not (p_name.value and p_cat.value):
                 ui.notify("Заполните все поля", color="red")
                 return
+            if p_price.value is None or p_price.value <= 0:
+                ui.notify("Введите цену", color="red")
+                return
             with SessionLocal() as s:
-                cs.create_product(
-                    s,
-                    name=p_name.value,
-                    category_id=p_cat.value,
-                    kind=p_kind.value,
-                    price_tiyn=int(p_price.value * 100),
-                )
+                try:
+                    cs.create_product(
+                        s,
+                        name=p_name.value,
+                        category_id=p_cat.value,
+                        kind=p_kind.value,
+                        price_tiyn=round(p_price.value * 100),
+                    )
+                except (ValueError, IntegrityError) as e:
+                    s.rollback()
+                    ui.notify(str(e), color="red")
+                    return
             p_name.value = ""
             refresh()
 
