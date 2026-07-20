@@ -7,9 +7,11 @@ from app.models.catalog import (
     ProductModifierGroup,
 )
 from app.models.inventory import Ingredient, RecipeItem, StockMove
+from app.models.shifts import CashCollection, Shift
 from app.models.users import User
 
 __all__ = [
+    "CashCollection",
     "Category",
     "Ingredient",
     "Modifier",
@@ -18,6 +20,7 @@ __all__ = [
     "Product",
     "ProductModifierGroup",
     "RecipeItem",
+    "Shift",
     "StockMove",
     "User",
 ]
