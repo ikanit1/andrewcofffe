@@ -170,3 +170,17 @@ def test_cannot_refund_more_than_bought(session):
     with pytest.raises(ValueError):
         sales.refund_sale(session, order_id=order.id, cashier_id=cashier.id,
                           reason="слишком много", item_qty={item.id: 5})
+
+
+def test_write_failure_rolls_back(session, monkeypatch):
+    cashier, latte, milk, beans, shift = _setup(session)
+    import app.services.sales_service as s
+    # заставим списание упасть уже после создания заказа
+    monkeypatch.setattr(s, "_deduct_stock",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("bdb")))
+    with pytest.raises(RuntimeError):
+        s.create_sale(session, cashier_id=cashier.id, lines=[_line(latte.id)],
+                      payments=[PaymentInput("cash", 150000, 150000)])
+    # откат: заказа нет, склад не тронут, сессия пригодна для дальнейших запросов
+    assert session.query(Order).count() == 0
+    assert session.get(Ingredient, milk.id).stock_qty == 1000

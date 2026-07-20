@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.models import (
     Ingredient,
     Modifier,
+    ModifierItem,
     Order,
     OrderItem,
     OrderItemModifier,
@@ -99,48 +100,52 @@ def create_sale(
 
     pricing.validate_payments(total, payments)
 
-    order = Order(
-        shift_id=shift.id,
-        number=_next_order_number(session, shift.id),
-        status="paid",
-        subtotal_tiyn=subtotal,
-        discount_tiyn=order_disc,
-        total_tiyn=total,
-        cost_tiyn=sum(cl.unit_cost_tiyn * cl.qty for cl in cart_lines),
-    )
-    session.add(order)
-    session.flush()
-
-    for li, product, mods, cart_line in resolved:
-        item = OrderItem(
-            order_id=order.id,
-            product_id=product.id,
-            name=product.name,
-            unit_price_tiyn=pricing.line_unit_price_tiyn(cart_line),
-            qty=li.qty,
-            discount_tiyn=pricing.line_discount_tiyn(cart_line),
-            line_total_tiyn=pricing.line_total_tiyn(cart_line),
-            unit_cost_tiyn=cart_line.unit_cost_tiyn,
+    try:
+        order = Order(
+            shift_id=shift.id,
+            number=_next_order_number(session, shift.id),
+            status="paid",
+            subtotal_tiyn=subtotal,
+            discount_tiyn=order_disc,
+            total_tiyn=total,
+            cost_tiyn=sum(cl.unit_cost_tiyn * cl.qty for cl in cart_lines),
         )
-        session.add(item)
+        session.add(order)
         session.flush()
-        for m in mods:
-            session.add(OrderItemModifier(
-                order_item_id=item.id, modifier_id=m.id,
-                name=m.name, price_delta_tiyn=m.price_delta_tiyn,
+
+        for li, product, mods, cart_line in resolved:
+            item = OrderItem(
+                order_id=order.id,
+                product_id=product.id,
+                name=product.name,
+                unit_price_tiyn=pricing.line_unit_price_tiyn(cart_line),
+                qty=li.qty,
+                discount_tiyn=pricing.line_discount_tiyn(cart_line),
+                line_total_tiyn=pricing.line_total_tiyn(cart_line),
+                unit_cost_tiyn=cart_line.unit_cost_tiyn,
+            )
+            session.add(item)
+            session.flush()
+            for m in mods:
+                session.add(OrderItemModifier(
+                    order_item_id=item.id, modifier_id=m.id,
+                    name=m.name, price_delta_tiyn=m.price_delta_tiyn,
+                ))
+            _deduct_stock(session, product, mods, li.qty, order.id)
+
+        for pay in payments:
+            change = None
+            if pay.method == "cash" and pay.tendered_tiyn is not None:
+                change = max(pay.tendered_tiyn - pay.amount_tiyn, 0)
+            session.add(Payment(
+                order_id=order.id, method=pay.method, amount_tiyn=pay.amount_tiyn,
+                tendered_tiyn=pay.tendered_tiyn, change_tiyn=change,
             ))
-        _deduct_stock(session, product, mods, li.qty, order.id)
 
-    for pay in payments:
-        change = None
-        if pay.method == "cash" and pay.tendered_tiyn is not None:
-            change = max(pay.tendered_tiyn - pay.amount_tiyn, 0)
-        session.add(Payment(
-            order_id=order.id, method=pay.method, amount_tiyn=pay.amount_tiyn,
-            tendered_tiyn=pay.tendered_tiyn, change_tiyn=change,
-        ))
-
-    session.commit()
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
     return order
 
 
@@ -163,7 +168,6 @@ def _deduct_stock(session: Session, product: Product, mods, qty: int, order_id: 
         move(product.ingredient_id, 1)
 
     for m in mods:
-        from app.models import ModifierItem
         for mi in session.scalars(select(ModifierItem).where(ModifierItem.modifier_id == m.id)).all():
             move(mi.ingredient_id, mi.qty)
 
@@ -206,29 +210,32 @@ def refund_sale(
     if not plan:
         raise ValueError("Нечего возвращать")
 
-    refund = Refund(order_id=order_id, amount_tiyn=0, reason=reason.strip(), cashier_id=cashier_id)
-    session.add(refund)
-    session.flush()
+    try:
+        refund = Refund(order_id=order_id, amount_tiyn=0, reason=reason.strip(), cashier_id=cashier_id)
+        session.add(refund)
+        session.flush()
 
-    refunded_amount = 0
-    for item_id, q in plan.items():
-        it = by_id[item_id]
-        unit_net = it.line_total_tiyn // it.qty  # цена единицы после позиционной скидки
-        item_amount = unit_net * q
-        refunded_amount += item_amount
-        it.refunded_qty += q
-        session.add(RefundItem(refund_id=refund.id, order_item_id=item_id, qty=q,
-                               amount_tiyn=item_amount))
-        product = session.get(Product, it.product_id) if it.product_id else None
-        if product is not None and product.kind == "retail" and product.ingredient_id is not None:
-            apply_move(
-                session, product.ingredient_id,
-                qty_delta=q, kind="refund",
-                ref_type="order", ref_id=order_id, commit=False,
-            )
+        refunded_amount = 0
+        for item_id, q in plan.items():
+            it = by_id[item_id]
+            item_amount = it.line_total_tiyn * q // it.qty  # доля строки, при полном возврате = line_total
+            refunded_amount += item_amount
+            it.refunded_qty += q
+            session.add(RefundItem(refund_id=refund.id, order_item_id=item_id, qty=q,
+                                   amount_tiyn=item_amount))
+            product = session.get(Product, it.product_id) if it.product_id else None
+            if product is not None and product.kind == "retail" and product.ingredient_id is not None:
+                apply_move(
+                    session, product.ingredient_id,
+                    qty_delta=q, kind="refund",
+                    ref_type="order", ref_id=order_id, commit=False,
+                )
 
-    refund.amount_tiyn = refunded_amount
-    all_refunded = all(it.refunded_qty >= it.qty for it in items)
-    order.status = "refunded" if all_refunded else "partially_refunded"
-    session.commit()
+        refund.amount_tiyn = refunded_amount
+        all_refunded = all(it.refunded_qty >= it.qty for it in items)
+        order.status = "refunded" if all_refunded else "partially_refunded"
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
     return refund
