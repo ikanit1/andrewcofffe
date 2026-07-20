@@ -1,0 +1,121 @@
+import pytest
+
+from app.models import (
+    Category,
+    Ingredient,
+    Order,
+    OrderItem,
+    Payment,
+    Product,
+    RecipeItem,
+    StockMove,
+    User,
+)
+from app.services import sales_service as sales
+from app.services import shift_service as ss
+from app.services.pricing import PaymentInput
+
+
+def _setup(session):
+    cashier = User(telegram_id=1, name="Кассир", role="cashier", discount_limit_percent=10)
+    session.add(cashier)
+    cat = Category(name="Кофе")
+    session.add(cat)
+    session.flush()
+    milk = Ingredient(name="Молоко", unit="мл", stock_qty=1000, avg_cost_tiyn=50.0)
+    beans = Ingredient(name="Кофе зерно", unit="г", stock_qty=100, avg_cost_tiyn=300.0)
+    session.add_all([milk, beans])
+    session.flush()
+    latte = Product(name="Латте", category_id=cat.id, kind="prepared", price_tiyn=150000)
+    session.add(latte)
+    session.flush()
+    session.add_all([
+        RecipeItem(product_id=latte.id, ingredient_id=beans.id, qty=18),
+        RecipeItem(product_id=latte.id, ingredient_id=milk.id, qty=200),
+    ])
+    session.commit()
+    shift = ss.open_shift(session, cashier_id=cashier.id, opening_cash_tiyn=0)
+    return cashier, latte, milk, beans, shift
+
+
+def _line(product_id, qty=1, modifier_ids=None, discount_kind=None, discount_value=0):
+    return sales.SaleLineInput(
+        product_id=product_id, qty=qty, modifier_ids=modifier_ids or [],
+        discount_kind=discount_kind, discount_value=discount_value,
+    )
+
+
+def test_sale_persists_order_and_deducts_stock(session):
+    cashier, latte, milk, beans, shift = _setup(session)
+    order = sales.create_sale(
+        session,
+        cashier_id=cashier.id,
+        lines=[_line(latte.id, qty=2)],
+        payments=[PaymentInput("cash", 300000, 300000)],
+    )
+    assert order.total_tiyn == 300000
+    assert order.cost_tiyn == 2 * 15400
+    assert order.number == 1
+    assert session.get(Ingredient, milk.id).stock_qty == 600
+    assert session.get(Ingredient, beans.id).stock_qty == 64
+    moves = session.query(StockMove).filter_by(kind="sale").all()
+    assert {m.ref_type for m in moves} == {"order"}
+    assert all(m.ref_id == order.id for m in moves)
+
+
+def test_order_numbers_increment_per_shift(session):
+    cashier, latte, milk, beans, shift = _setup(session)
+    o1 = sales.create_sale(session, cashier_id=cashier.id, lines=[_line(latte.id)],
+                           payments=[PaymentInput("cash", 150000, 150000)])
+    o2 = sales.create_sale(session, cashier_id=cashier.id, lines=[_line(latte.id)],
+                           payments=[PaymentInput("cash", 150000, 150000)])
+    assert (o1.number, o2.number) == (1, 2)
+
+
+def test_split_payment_and_change(session):
+    cashier, latte, milk, beans, shift = _setup(session)
+    order = sales.create_sale(
+        session, cashier_id=cashier.id, lines=[_line(latte.id)],
+        payments=[PaymentInput("cash", 50000, 100000), PaymentInput("kaspi_qr", 100000)],
+    )
+    pays = session.query(Payment).filter_by(order_id=order.id).order_by(Payment.id).all()
+    assert pays[0].change_tiyn == 50000
+    assert pays[1].method == "kaspi_qr"
+
+
+def test_payment_must_match_total(session):
+    cashier, latte, milk, beans, shift = _setup(session)
+    with pytest.raises(ValueError):
+        sales.create_sale(session, cashier_id=cashier.id, lines=[_line(latte.id)],
+                          payments=[PaymentInput("cash", 100000, 100000)])
+    assert session.query(Order).count() == 0
+    assert session.get(Ingredient, milk.id).stock_qty == 1000
+
+
+def test_discount_within_limit_ok(session):
+    cashier, latte, milk, beans, shift = _setup(session)
+    order = sales.create_sale(
+        session, cashier_id=cashier.id,
+        lines=[_line(latte.id, discount_kind="percent", discount_value=10)],
+        payments=[PaymentInput("cash", 135000, 135000)],
+    )
+    assert order.total_tiyn == 135000
+
+
+def test_discount_over_limit_blocked(session):
+    cashier, latte, milk, beans, shift = _setup(session)
+    with pytest.raises(PermissionError):
+        sales.create_sale(
+            session, cashier_id=cashier.id,
+            lines=[_line(latte.id, discount_kind="percent", discount_value=20)],
+            payments=[PaymentInput("cash", 120000, 120000)],
+        )
+    assert session.query(Order).count() == 0
+
+
+def test_sale_requires_open_shift(session):
+    cashier, latte, milk, beans, shift = _setup(session)
+    ss.close_shift(session, shift_id=shift.id, counted_cash_tiyn=0)
+    with pytest.raises(ValueError):
+        sales.create_sale(session, cashier_id=cashier.id, lines=[_line(latte.id)],
+                          payments=[PaymentInput("cash", 150000, 150000)])
