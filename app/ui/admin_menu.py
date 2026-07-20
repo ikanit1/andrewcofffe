@@ -9,6 +9,10 @@ KIND_LABELS = {"prepared": "Приготовленный", "retail": "Штучн
 
 @ui.page("/admin/menu")
 def admin_menu_page() -> None:
+    from app.ui.guard import require_admin
+    if not require_admin():
+        return
+
     ui.label("Меню и цены").classes("text-2xl font-bold")
 
     container = ui.column().classes("w-full max-w-3xl gap-2")

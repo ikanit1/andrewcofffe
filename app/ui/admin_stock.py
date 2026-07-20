@@ -8,6 +8,10 @@ from app.models import Ingredient, Product, RecipeItem
 
 @ui.page("/admin/stock")
 def admin_stock_page() -> None:
+    from app.ui.guard import require_admin
+    if not require_admin():
+        return
+
     ui.label("Склад: позиции и тех-карты").classes("text-2xl font-bold")
 
     ing_container = ui.column().classes("w-full max-w-3xl gap-1")
