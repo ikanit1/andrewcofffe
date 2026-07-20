@@ -534,11 +534,19 @@ def line_total_tiyn(line: CartLine) -> int:
 
 
 def effective_discount_percent(line: CartLine) -> int:
-    """Скидка позиции в процентах (для проверки лимита кассира)."""
+    """Скидка позиции в процентах (для отображения; округление вниз)."""
     gross = _gross_tiyn(line)
     if gross == 0 or line.discount_kind is None:
         return 0
     return line_discount_tiyn(line) * 100 // gross
+
+
+def discount_within_limit_tiyn(gross_tiyn: int, discount_tiyn: int, limit_percent: int) -> bool:
+    """True, если скидка не превышает лимит. Точное сравнение без округления:
+    discount/gross <= limit/100  ⇔  discount*100 <= limit*gross."""
+    if gross_tiyn <= 0:
+        return True
+    return discount_tiyn * 100 <= limit_percent * gross_tiyn
 
 
 def order_subtotal_tiyn(lines: list[CartLine]) -> int:
@@ -1144,15 +1152,18 @@ def create_sale(
             discount_kind=li.discount_kind,
             discount_value=li.discount_value,
         )
-        # проверка лимита скидки кассира (позиция)
-        if pricing.effective_discount_percent(cart_line) > limit:
+        # проверка лимита скидки кассира (позиция) — точное сравнение без округления
+        line_gross = pricing.line_unit_price_tiyn(cart_line) * cart_line.qty
+        if not pricing.discount_within_limit_tiyn(
+            line_gross, pricing.line_discount_tiyn(cart_line), limit
+        ):
             raise PermissionError("Скидка превышает лимит кассира")
         resolved.append((li, product, mods, cart_line))
 
     cart_lines = [r[3] for r in resolved]
     subtotal = pricing.order_subtotal_tiyn(cart_lines)
     order_disc = pricing.order_discount_tiyn(subtotal, order_discount_kind, order_discount_value)
-    if subtotal > 0 and order_disc * 100 // subtotal > limit:
+    if not pricing.discount_within_limit_tiyn(subtotal, order_disc, limit):
         raise PermissionError("Скидка на чек превышает лимит кассира")
     total = pricing.order_total_tiyn(subtotal, order_disc)
 
