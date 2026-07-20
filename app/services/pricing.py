@@ -46,11 +46,19 @@ def line_total_tiyn(line: CartLine) -> int:
 
 
 def effective_discount_percent(line: CartLine) -> int:
-    """Скидка позиции в процентах (для проверки лимита кассира)."""
+    """Скидка позиции в процентах (для отображения; округление вниз)."""
     gross = _gross_tiyn(line)
     if gross == 0 or line.discount_kind is None:
         return 0
     return line_discount_tiyn(line) * 100 // gross
+
+
+def discount_within_limit_tiyn(gross_tiyn: int, discount_tiyn: int, limit_percent: int) -> bool:
+    """True, если скидка не превышает лимит. Точное сравнение без округления:
+    discount/gross <= limit/100  ⇔  discount*100 <= limit*gross."""
+    if gross_tiyn <= 0:
+        return True
+    return discount_tiyn * 100 <= limit_percent * gross_tiyn
 
 
 def order_subtotal_tiyn(lines: list[CartLine]) -> int:

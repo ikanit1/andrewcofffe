@@ -47,6 +47,16 @@ def test_effective_discount_percent_for_limit_check():
     assert p.effective_discount_percent(line3) == 0
 
 
+def test_discount_within_limit_is_exact():
+    # лимит 10%, gross 150000 → ровно 15000 разрешено, 15001 (10.0006%) нет
+    assert p.discount_within_limit_tiyn(150000, 15000, 10) is True
+    assert p.discount_within_limit_tiyn(150000, 15001, 10) is False
+    # floor в процентах округлил бы 16499/150000=10.99% до 10 и пропустил — здесь нет
+    assert p.discount_within_limit_tiyn(150000, 16499, 10) is False
+    # нулевой gross не блокирует
+    assert p.discount_within_limit_tiyn(0, 0, 10) is True
+
+
 def test_validate_payments_must_cover_total():
     pays = [p.PaymentInput("cash", 100000, 200000), p.PaymentInput("card", 80000, None)]
     p.validate_payments(180000, pays)
