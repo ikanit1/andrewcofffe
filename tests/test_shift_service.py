@@ -1,6 +1,6 @@
 import pytest
 
-from app.models import Order, Payment, Refund, Shift, User
+from app.models import NotificationOutbox, Order, Payment, Refund, Shift, User
 from app.services import shift_service as ss
 
 
@@ -91,3 +91,34 @@ def test_cannot_close_twice(session):
     ss.close_shift(session, shift_id=sh.id, counted_cash_tiyn=0)
     with pytest.raises(ValueError):
         ss.close_shift(session, shift_id=sh.id, counted_cash_tiyn=0)
+
+
+def test_open_shift_enqueues_notification(session):
+    c = _cashier(session)
+    ss.open_shift(session, cashier_id=c.id, opening_cash_tiyn=500000)
+    notes = session.query(NotificationOutbox).filter_by(kind="shift_open").all()
+    assert len(notes) == 1
+    assert "Кассир" in notes[0].text
+
+
+def test_close_shift_enqueues_notification(session):
+    c = _cashier(session)
+    sh = ss.open_shift(session, cashier_id=c.id, opening_cash_tiyn=100000)
+    ss.close_shift(session, shift_id=sh.id, counted_cash_tiyn=95000)
+    notes = session.query(NotificationOutbox).filter_by(kind="shift_close").all()
+    assert len(notes) == 1
+    assert "Кассир" in notes[0].text
+
+
+def test_collection_enqueues_notification(session):
+    c = _cashier(session)
+    sh = ss.open_shift(session, cashier_id=c.id, opening_cash_tiyn=500000)
+    ss.add_collection(session, shift_id=sh.id, amount_tiyn=200000, note="в сейф")
+    notes = session.query(NotificationOutbox).filter_by(kind="collection").all()
+    assert len(notes) == 1
+    assert "Кассир" in notes[0].text
+
+
+def test_collection_rejects_unknown_shift(session):
+    with pytest.raises(ValueError):
+        ss.add_collection(session, shift_id=999, amount_tiyn=1000)

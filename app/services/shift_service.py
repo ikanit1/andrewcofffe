@@ -1,8 +1,10 @@
 from sqlalchemy import exists, func, select
 from sqlalchemy.orm import Session
 
-from app.models import CashCollection, Order, Payment, Refund, Shift
+from app.models import CashCollection, Order, Payment, Refund, Shift, User
 from app.models.inventory import utcnow
+from app.services import notification_service
+from app.timezone import to_almaty
 
 
 def current_open_shift(session: Session) -> Shift | None:
@@ -14,8 +16,17 @@ def open_shift(session: Session, *, cashier_id: int, opening_cash_tiyn: int) -> 
         raise ValueError("Уже есть открытая смена")
     if opening_cash_tiyn < 0:
         raise ValueError("Стартовая наличность не может быть отрицательной")
+    cashier = session.get(User, cashier_id)
     sh = Shift(cashier_id=cashier_id, opening_cash_tiyn=opening_cash_tiyn, status="open")
     session.add(sh)
+    session.flush()
+    notification_service.enqueue(
+        session, kind="shift_open",
+        text=(
+            f"Смена открыта: {cashier.name}, {to_almaty(sh.opened_at):%d.%m.%Y %H:%M}, "
+            f"старт {opening_cash_tiyn / 100:.2f} тг"
+        ),
+    )
     session.commit()
     return sh
 
@@ -23,8 +34,16 @@ def open_shift(session: Session, *, cashier_id: int, opening_cash_tiyn: int) -> 
 def add_collection(session: Session, *, shift_id: int, amount_tiyn: int, note: str | None = None) -> CashCollection:
     if amount_tiyn <= 0:
         raise ValueError("Сумма инкассации должна быть больше нуля")
+    sh = session.get(Shift, shift_id)
+    if sh is None:
+        raise ValueError(f"Смена {shift_id} не найдена")
+    cashier = session.get(User, sh.cashier_id)
     coll = CashCollection(shift_id=shift_id, amount_tiyn=amount_tiyn, note=note)
     session.add(coll)
+    notification_service.enqueue(
+        session, kind="collection",
+        text=f"Инкассация {amount_tiyn / 100:.2f} тг, смена №{shift_id}, {cashier.name}",
+    )
     session.commit()
     return coll
 
@@ -73,5 +92,15 @@ def close_shift(session: Session, *, shift_id: int, counted_cash_tiyn: int) -> S
     sh.counted_cash_tiyn = counted_cash_tiyn
     sh.closed_at = utcnow()
     sh.status = "closed"
+    cashier = session.get(User, sh.cashier_id)
+    diff = sh.counted_cash_tiyn - sh.expected_cash_tiyn
+    notification_service.enqueue(
+        session, kind="shift_close",
+        text=(
+            f"Смена закрыта: {cashier.name}, {to_almaty(sh.closed_at):%d.%m.%Y %H:%M}, "
+            f"ожидалось {sh.expected_cash_tiyn / 100:.2f} тг, "
+            f"по факту {sh.counted_cash_tiyn / 100:.2f} тг, расхождение {diff / 100:+.2f} тг"
+        ),
+    )
     session.commit()
     return sh
