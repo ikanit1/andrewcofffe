@@ -1,6 +1,7 @@
 from sqlalchemy.orm import Session
 
 from app.models import Ingredient, StockMove
+from app.services import notification_service
 
 
 def apply_move(
@@ -36,9 +37,27 @@ def apply_move(
     ing.stock_qty = Ingredient.stock_qty + qty_delta
     session.add(move)
     session.flush()
+    _check_low_stock(session, ing)
     if commit:
         session.commit()
     return move
+
+
+def _check_low_stock(session: Session, ing: Ingredient) -> None:
+    """Уведомляет один раз при пересечении порога вниз; повтор — только после
+    пересечения порога вверх (пополнение) и нового падения."""
+    if ing.stock_qty < ing.low_stock_threshold:
+        if not ing.low_stock_notified:
+            notification_service.enqueue(
+                session, kind="low_stock",
+                text=(
+                    f"Низкий остаток: {ing.name} — {ing.stock_qty} {ing.unit} "
+                    f"(порог {ing.low_stock_threshold})"
+                ),
+            )
+            ing.low_stock_notified = True
+    else:
+        ing.low_stock_notified = False
 
 
 def receive_purchase(

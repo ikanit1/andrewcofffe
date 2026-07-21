@@ -21,6 +21,7 @@ class Ingredient(Base):
     stock_qty: Mapped[int] = mapped_column(default=0)  # кэш остатка в базовых единицах
     avg_cost_tiyn: Mapped[float] = mapped_column(default=0.0)  # тиын за базовую единицу
     low_stock_threshold: Mapped[int] = mapped_column(default=0)
+    low_stock_notified: Mapped[bool] = mapped_column(default=False)
     is_active: Mapped[bool] = mapped_column(default=True)
 
 

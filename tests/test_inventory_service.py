@@ -1,6 +1,6 @@
 import pytest
 
-from app.models import Ingredient, StockMove
+from app.models import Ingredient, NotificationOutbox, StockMove
 from app.services import inventory_service as inv
 
 
@@ -43,3 +43,34 @@ def test_purchase_rejects_bad_input(session):
         inv.receive_purchase(session, milk.id, qty=0, total_cost_tiyn=100)
     with pytest.raises(ValueError):
         inv.receive_purchase(session, milk.id, qty=100, total_cost_tiyn=-1)
+
+
+def test_low_stock_triggers_notification_once(session):
+    milk = Ingredient(name="Молоко", unit="мл", low_stock_threshold=1000)
+    session.add(milk)
+    session.commit()
+    inv.receive_purchase(session, milk.id, qty=5000, total_cost_tiyn=100000)  # 5000, выше порога
+    assert session.query(NotificationOutbox).filter_by(kind="low_stock").count() == 0
+
+    inv.apply_move(session, milk.id, qty_delta=-4500, kind="sale", commit=True)  # 500, ниже порога
+    notes = session.query(NotificationOutbox).filter_by(kind="low_stock").all()
+    assert len(notes) == 1
+    assert "Молоко" in notes[0].text
+
+    inv.apply_move(session, milk.id, qty_delta=-100, kind="sale", commit=True)  # 400, всё ещё ниже
+    assert session.query(NotificationOutbox).filter_by(kind="low_stock").count() == 1  # без дублей
+
+
+def test_low_stock_notifies_again_after_restock_and_fall(session):
+    milk = Ingredient(name="Молоко", unit="мл", low_stock_threshold=1000)
+    session.add(milk)
+    session.commit()
+    inv.receive_purchase(session, milk.id, qty=5000, total_cost_tiyn=100000)
+    inv.apply_move(session, milk.id, qty_delta=-4500, kind="sale", commit=True)  # 500 → уведомление №1
+    assert session.query(NotificationOutbox).filter_by(kind="low_stock").count() == 1
+
+    inv.receive_purchase(session, milk.id, qty=5000, total_cost_tiyn=100000)  # 5500, выше порога — сброс флага
+    assert session.query(NotificationOutbox).filter_by(kind="low_stock").count() == 1  # само пополнение не уведомляет
+
+    inv.apply_move(session, milk.id, qty_delta=-4600, kind="sale", commit=True)  # 900 → уведомление №2
+    assert session.query(NotificationOutbox).filter_by(kind="low_stock").count() == 2
