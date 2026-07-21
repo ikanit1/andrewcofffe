@@ -146,12 +146,25 @@ def sale_page() -> None:
         dialog.open()
 
     with products_col:
-        for cat, products in menu:
-            ui.label(cat.name).classes("text-xl mt-2")
-            with ui.row().classes("flex-wrap gap-2"):
-                for p in products:
-                    ui.button(f"{p.name}\n{p.price_tiyn/100:.2f} тг",
-                              on_click=lambda p=p: add_to_cart(p)).classes("w-40 h-20")
+        if not menu:
+            ui.label("Меню пустое").classes("text-gray-500")
+        else:
+            with ui.tabs().classes("w-full") as cat_tabs:
+                for cat, _ in menu:
+                    ui.tab(name=str(cat.id), label=cat.name)
+            with ui.tab_panels(cat_tabs, value=str(menu[0][0].id)).classes("w-full"):
+                for cat, products in menu:
+                    with ui.tab_panel(str(cat.id)):
+                        with ui.grid(columns=3).classes("w-full gap-3"):
+                            for p in products:
+                                card = ui.card().classes(
+                                    "w-full h-28 items-center justify-center cursor-pointer "
+                                    "p-2 hover:bg-blue-50 transition"
+                                )
+                                card.on("click", lambda p=p: add_to_cart(p))
+                                with card:
+                                    ui.label(p.name).classes("text-lg font-bold text-center leading-tight")
+                                    ui.label(f"{p.price_tiyn/100:.0f} тг").classes("text-base text-gray-600")
 
     def cart_total_tiyn() -> int:
         all_mod_ids = {mid for c in cart for mid in c["modifier_ids"]}
