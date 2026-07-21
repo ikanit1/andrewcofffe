@@ -257,41 +257,50 @@ def sale_page() -> None:
                     if total % 100 != 0:
                         ui.notify("Kaspi принимает только целые тенге", color="red")
                         return
-                    ui.notify("Ожидание оплаты на терминале… клиент сканирует QR или прикладывает карту",
-                              color="blue")
+                    submit_btn.disable()  # защита от повторного нажатия во время оплаты
                     try:
-                        with SessionLocal() as s:
-                            result = await kaspi_service.pay(s, total)
-                    except (ValueError, KaspiError) as e:
-                        ui.notify(str(e), color="red")
+                        ui.notify("Ожидание оплаты на терминале… клиент сканирует QR или прикладывает карту",
+                                  color="blue")
+                        try:
+                            with SessionLocal() as s:
+                                result = await kaspi_service.pay(s, total)
+                        except (ValueError, KaspiError) as e:
+                            ui.notify(str(e), color="red")
+                            return
+                        except Exception:
+                            ui.notify("Ошибка связи с терминалом. Чек не проведён.", color="red")
+                            return
+                        if result.status != "success":
+                            ui.notify(result.message or "Оплата не подтверждена терминалом. Чек не проведён.",
+                                      color="red")
+                            return
+                        try:
+                            with SessionLocal() as s:
+                                lines = [sales.SaleLineInput(product_id=c["product_id"], qty=c["qty"],
+                                                             modifier_ids=c["modifier_ids"]) for c in cart]
+                                order = sales.create_sale(
+                                    s, cashier_id=uid, lines=lines,
+                                    payments=[PaymentInput("kaspi_terminal", total, None,
+                                                           provider="terminal",
+                                                           terminal_method=result.terminal_method,
+                                                           transaction_id=result.transaction_id)],
+                                )
+                                num = order.number
+                        except Exception as e:
+                            # деньги уже ушли: закрываем диалог и чистим корзину, чтобы кассир не пробил повторно
+                            dialog.close()
+                            cart.clear()
+                            render_cart()
+                            ui.notify(f"Оплата прошла, но чек не сохранён ({e}). Запишите заказ вручную.",
+                                      color="red")
+                            return
+                        dialog.close()
+                        cart.clear()
+                        render_cart()
+                        ui.notify(f"Заказ №{num} оплачен через Kaspi ({result.terminal_method}).", color="green")
                         return
-                    except Exception:
-                        ui.notify("Ошибка связи с терминалом. Чек не проведён.", color="red")
-                        return
-                    if result.status != "success":
-                        ui.notify(result.message or "Оплата не подтверждена терминалом. Чек не проведён.",
-                                  color="red")
-                        return
-                    try:
-                        with SessionLocal() as s:
-                            lines = [sales.SaleLineInput(product_id=c["product_id"], qty=c["qty"],
-                                                         modifier_ids=c["modifier_ids"]) for c in cart]
-                            order = sales.create_sale(
-                                s, cashier_id=uid, lines=lines,
-                                payments=[PaymentInput("kaspi_terminal", total, None,
-                                                       provider="terminal",
-                                                       terminal_method=result.terminal_method,
-                                                       transaction_id=result.transaction_id)],
-                            )
-                            num = order.number
-                    except (ValueError, PermissionError) as e:
-                        ui.notify(f"Оплата прошла, но чек не сохранён: {e}", color="red")
-                        return
-                    dialog.close()
-                    cart.clear()
-                    render_cart()
-                    ui.notify(f"Заказ №{num} оплачен через Kaspi ({result.terminal_method}).", color="green")
-                    return
+                    finally:
+                        submit_btn.enable()
                 # --- дальше прежняя (синхронная) логика для остальных способов ---
                 if split.value:
                     amt_a = round((amount_a.value or 0) * 100)
@@ -342,7 +351,7 @@ def sale_page() -> None:
                     msg += f" Сдача: {change/100:.2f} тг"
                 ui.notify(msg, color="green")
 
-            ui.button("Провести", on_click=confirm_payment)
+            submit_btn = ui.button("Провести", on_click=confirm_payment)
             ui.button("Отмена", on_click=dialog.close)
         dialog.open()
 

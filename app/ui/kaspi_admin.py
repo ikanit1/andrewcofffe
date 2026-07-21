@@ -3,7 +3,6 @@ from nicegui import ui
 from app.db import SessionLocal
 from app.kaspi import service as kaspi_service
 from app.kaspi import settings as ksettings
-from app.kaspi.client import KaspiError
 from app.ui.guard import require_admin
 
 
@@ -42,7 +41,7 @@ def kaspi_admin_page() -> None:
         try:
             with SessionLocal() as session:
                 data = await kaspi_service.check_connection(session)
-        except (KaspiError, Exception) as e:
+        except Exception as e:
             ui.notify(f"Нет связи с терминалом: {e}", color="red")
             return
         ui.notify(
@@ -56,7 +55,7 @@ def kaspi_admin_page() -> None:
         try:
             with SessionLocal() as session:
                 await kaspi_service.register_cashier(session)
-        except (KaspiError, Exception) as e:
+        except Exception as e:
             ui.notify(f"Регистрация не удалась: {e}", color="red")
             return
         ui.notify("Касса зарегистрирована, токен получен", color="green")
