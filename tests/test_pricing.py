@@ -74,3 +74,10 @@ def test_negative_and_bad_inputs_rejected():
         p.line_discount_tiyn(_line(discount_kind="percent", discount_value=150))
     with pytest.raises(ValueError):
         p.validate_payments(100000, [p.PaymentInput("cash", -1, None)])
+
+
+def test_cart_line_from_dict_shape():
+    # форма данных, которую cashier.py кладёт в корзину: base_price + список дельт модификаторов
+    line = p.CartLine(base_price_tiyn=150000, qty=2, unit_cost_tiyn=0,
+                      modifier_price_deltas=[20000, 5000])
+    assert p.line_total_tiyn(line) == (150000 + 20000 + 5000) * 2

@@ -6,7 +6,8 @@ from app.services import modifier_service as ms
 from app.services import sales_service as sales
 from app.services.catalog_service import list_menu
 from app.services.pricing import PaymentInput
-from app.models import Order, OrderItem
+from app.services import pricing
+from app.models import Modifier, Order, OrderItem
 from app.ui.guard import current_user_id, require_user
 
 
@@ -61,7 +62,7 @@ def cashier_page() -> None:
     with ui.expansion("Закрыть смену").classes("w-full max-w-md"):
         with SessionLocal() as s:
             expected = ss.expected_cash_tiyn(s, shift.id)
-        ui.label(f"Ожидается в кассе: {expected / 100:.0f} тг")
+        ui.label(f"Ожидается в кассе: {expected / 100:.2f} тг")
         counted = ui.number("Фактически в кассе, тг", value=expected / 100, min=0, format="%.0f")
 
         def do_close() -> None:
@@ -73,7 +74,7 @@ def cashier_page() -> None:
                 ui.notify(str(e), color="red")
                 return
             diff = (closed.counted_cash_tiyn - closed.expected_cash_tiyn) / 100
-            ui.notify(f"Смена закрыта. Расхождение: {diff:+.0f} тг")
+            ui.notify(f"Смена закрыта. Расхождение: {diff:+.2f} тг")
             ui.navigate.to("/cashier")
 
         ui.button("Закрыть смену", on_click=do_close, color="red")
@@ -115,7 +116,7 @@ def sale_page() -> None:
             ui.label(product.name).classes("text-xl")
             selectors = []
             for g, mods in groups:
-                opts = {m.id: f"{m.name} (+{m.price_delta_tiyn/100:.0f})" for m in mods}
+                opts = {m.id: f"{m.name} (+{m.price_delta_tiyn/100:.2f})" for m in mods}
                 sel = ui.select(opts, label=g.name)
                 selectors.append((g, sel, {m.id: m for m in mods}))
 
@@ -143,18 +144,24 @@ def sale_page() -> None:
             ui.label(cat.name).classes("text-xl mt-2")
             with ui.row().classes("flex-wrap gap-2"):
                 for p in products:
-                    ui.button(f"{p.name}\n{p.price_tiyn/100:.0f} тг",
+                    ui.button(f"{p.name}\n{p.price_tiyn/100:.2f} тг",
                               on_click=lambda p=p: add_to_cart(p)).classes("w-40 h-20")
 
     def cart_total_tiyn() -> int:
+        all_mod_ids = {mid for c in cart for mid in c["modifier_ids"]}
+        mods_by_id = {}
+        if all_mod_ids:
+            with SessionLocal() as s:
+                mods_by_id = {m.id: m for m in s.query(Modifier).filter(Modifier.id.in_(all_mod_ids)).all()}
         total = 0
         for c in cart:
-            total += (c["base_price_tiyn"]) * c["qty"]
-            with SessionLocal() as s:
-                for mid in c["modifier_ids"]:
-                    from app.models import Modifier
-                    m = s.get(Modifier, mid)
-                    total += (m.price_delta_tiyn if m else 0) * c["qty"]
+            line = pricing.CartLine(
+                base_price_tiyn=c["base_price_tiyn"],
+                qty=c["qty"],
+                unit_cost_tiyn=0,
+                modifier_price_deltas=[mods_by_id[mid].price_delta_tiyn for mid in c["modifier_ids"] if mid in mods_by_id],
+            )
+            total += pricing.line_total_tiyn(line)
         return total
 
     def render_cart() -> None:
@@ -181,14 +188,14 @@ def sale_page() -> None:
                     ui.button("−", on_click=dec)
                     ui.button("+", on_click=inc)
             ui.separator()
-            ui.label(f"Итого: {cart_total_tiyn()/100:.0f} тг").classes("text-lg font-bold")
+            ui.label(f"Итого: {cart_total_tiyn()/100:.2f} тг").classes("text-lg font-bold")
             if cart:
                 ui.button("Оплата", on_click=open_payment).classes("w-full")
 
     def open_payment() -> None:
         total = cart_total_tiyn()
         with ui.dialog() as dialog, ui.card():
-            ui.label(f"К оплате: {total/100:.0f} тг").classes("text-xl")
+            ui.label(f"К оплате: {total/100:.2f} тг").classes("text-xl")
             method = ui.select({"cash": "Наличные", "card": "Карта", "kaspi_qr": "Kaspi QR"},
                                label="Способ", value="cash")
             tendered = ui.number("Получено (наличные), тг", value=total / 100, format="%.0f")
@@ -213,12 +220,15 @@ def sale_page() -> None:
                 except (ValueError, PermissionError) as e:
                     ui.notify(str(e), color="red")
                     return
+                except Exception:
+                    ui.notify("Не удалось провести чек. Ничего не списано, попробуйте ещё раз.", color="red")
+                    return
                 dialog.close()
                 cart.clear()
                 render_cart()
                 msg = f"Заказ №{num} проведён."
                 if change:
-                    msg += f" Сдача: {change/100:.0f} тг"
+                    msg += f" Сдача: {change/100:.2f} тг"
                 ui.notify(msg, color="green")
 
             ui.button("Провести", on_click=confirm_payment)
@@ -256,7 +266,7 @@ def refunds_page() -> None:
                 names = ", ".join(f"{it.name}×{it.qty - it.refunded_qty}"
                                   for it in items if it.qty - it.refunded_qty > 0)
                 with ui.row().classes("items-center gap-3"):
-                    ui.label(f"№{o.number}: {names} — {o.total_tiyn/100:.0f} тг").classes("flex-1")
+                    ui.label(f"№{o.number}: {names} — {o.total_tiyn/100:.2f} тг").classes("flex-1")
                     ui.button("Вернуть полностью",
                               on_click=lambda oid=o.id: _do_full_refund(oid))
 
