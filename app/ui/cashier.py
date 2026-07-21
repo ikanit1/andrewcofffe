@@ -107,6 +107,9 @@ def sale_page() -> None:
     with ui.row().classes("w-full gap-4"):
         products_col = ui.column().classes("flex-1")
         cart_col = ui.column().classes("w-96")
+    # Стабильный контейнер для плашки успеха: cart_col пересоздаётся в render_cart(),
+    # поэтому диалог успеха нельзя создавать в его (удаляемом) контексте — держим здесь.
+    success_host = ui.column()
 
     def add_to_cart(product) -> None:
         with SessionLocal() as session:
@@ -344,7 +347,9 @@ def sale_page() -> None:
                         dialog.close()
                         cart.clear()
                         render_cart()
-                        sale_success(num, f"Kaspi ({result.terminal_method})")
+                        with success_host:
+                            success_host.clear()
+                            sale_success(num, f"Kaspi ({result.terminal_method})")
                         return
                     finally:
                         submit_btn.enable()
@@ -394,7 +399,9 @@ def sale_page() -> None:
                 cart.clear()
                 render_cart()
                 extra = f"Сдача: {change/100:.0f} тг" if change else ""
-                sale_success(num, extra)
+                with success_host:
+                    success_host.clear()
+                    sale_success(num, extra)
 
             submit_btn = ui.button("Провести", on_click=confirm_payment)
             ui.button("Отмена", on_click=dialog.close)

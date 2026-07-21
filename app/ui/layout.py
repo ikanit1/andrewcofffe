@@ -31,21 +31,26 @@ def cashier_header() -> None:
 
 
 def sale_success(order_number: int, extra: str = "") -> None:
-    """Крупная зелёная плашка подтверждения + короткий звук; авто-закрытие ~1.8с."""
-    ui.run_javascript(
-        "try{const c=new (window.AudioContext||window.webkitAudioContext)();"
-        "const o=c.createOscillator();const g=c.createGain();"
-        "o.connect(g);g.connect(c.destination);o.type='sine';o.frequency.value=880;"
-        "g.gain.setValueAtTime(0.0001,c.currentTime);"
-        "g.gain.exponentialRampToValueAtTime(0.3,c.currentTime+0.02);"
-        "g.gain.exponentialRampToValueAtTime(0.0001,c.currentTime+0.35);"
-        "o.start();o.stop(c.currentTime+0.36);}catch(e){}"
-    )
+    """Крупная зелёная плашка подтверждения + короткий звук; авто-закрытие ~1.8с.
+
+    Всё, что создаёт элементы (в т.ч. run_javascript и timer), выполняется ВНУТРИ
+    слота свежего диалога: вызывающий обработчик асинхронный, и после dialog.close()
+    исходного окна оплаты его слот уже удалён — обращение к нему уронило бы context.client.
+    """
     with ui.dialog().props("persistent") as dialog, \
             ui.card().classes("items-center p-8 gap-2 bg-green-50"):
         ui.icon("check_circle", size="5rem").classes("text-green-600")
         ui.label(f"Заказ №{order_number} проведён").classes("text-2xl font-bold text-green-800")
         if extra:
             ui.label(extra).classes("text-lg text-green-700")
+        ui.timer(1.8, dialog.close, once=True)
+        ui.run_javascript(
+            "try{const c=new (window.AudioContext||window.webkitAudioContext)();"
+            "const o=c.createOscillator();const g=c.createGain();"
+            "o.connect(g);g.connect(c.destination);o.type='sine';o.frequency.value=880;"
+            "g.gain.setValueAtTime(0.0001,c.currentTime);"
+            "g.gain.exponentialRampToValueAtTime(0.3,c.currentTime+0.02);"
+            "g.gain.exponentialRampToValueAtTime(0.0001,c.currentTime+0.35);"
+            "o.start();o.stop(c.currentTime+0.36);}catch(e){}"
+        )
     dialog.open()
-    ui.timer(1.8, dialog.close, once=True)
