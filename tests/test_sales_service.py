@@ -3,6 +3,7 @@ import pytest
 from app.models import (
     Category,
     Ingredient,
+    NotificationOutbox,
     Order,
     OrderItem,
     Payment,
@@ -211,3 +212,15 @@ def test_required_modifier_group_enforced_server_side(session):
         payments=[PaymentInput("cash", 170000, 170000)],
     )
     assert order.total_tiyn == 170000
+
+
+def test_refund_enqueues_notification(session):
+    cashier, latte, milk, beans, shift = _setup(session)
+    order = sales.create_sale(session, cashier_id=cashier.id, lines=[_line(latte.id)],
+                              payments=[PaymentInput("cash", 150000, 150000)])
+    sales.refund_sale(session, order_id=order.id, cashier_id=cashier.id, reason="брак")
+    notes = session.query(NotificationOutbox).filter_by(kind="refund").all()
+    assert len(notes) == 1
+    assert "150000" not in notes[0].text  # сумма должна быть в тенге, не в тиынах
+    assert "1500.00" in notes[0].text
+    assert "брак" in notes[0].text

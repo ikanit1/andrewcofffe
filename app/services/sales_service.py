@@ -17,7 +17,7 @@ from app.models import (
     RefundItem,
     User,
 )
-from app.services import costing, modifier_service, pricing
+from app.services import costing, modifier_service, notification_service, pricing
 from app.services.inventory_service import apply_move
 from app.services.pricing import CartLine, PaymentInput
 from app.services.shift_service import current_open_shift
@@ -238,6 +238,14 @@ def refund_sale(
         refund.amount_tiyn = refunded_amount
         all_refunded = all(it.refunded_qty >= it.qty for it in items)
         order.status = "refunded" if all_refunded else "partially_refunded"
+        cashier = session.get(User, cashier_id)
+        notification_service.enqueue(
+            session, kind="refund",
+            text=(
+                f"Возврат {refunded_amount / 100:.2f} тг по заказу №{order.number}, "
+                f"причина: {refund.reason}, {cashier.name}"
+            ),
+        )
         session.commit()
     except Exception:
         session.rollback()
