@@ -1,3 +1,5 @@
+import asyncio
+
 from nicegui import ui
 
 from app.db import SessionLocal
@@ -283,18 +285,38 @@ def sale_page() -> None:
                         ui.notify("Kaspi принимает только целые тенге", color="red")
                         return
                     submit_btn.disable()  # защита от повторного нажатия во время оплаты
+                    pay_task: asyncio.Task | None = None
+                    with ui.dialog().props("persistent") as wait_dialog, \
+                            ui.card().classes("items-center p-8 gap-4"):
+                        ui.spinner(size="4rem")
+                        ui.label("Ожидание оплаты на терминале…").classes("text-xl font-bold")
+                        ui.label(f"К оплате: {total/100:.0f} тг").classes("text-2xl")
+                        ui.label("Клиент сканирует QR или прикладывает карту").classes("text-gray-600")
+                        ui.button("Отменить", color="red",
+                                  on_click=lambda: pay_task.cancel() if pay_task else None)
+                    wait_dialog.open()
                     try:
-                        ui.notify("Ожидание оплаты на терминале… клиент сканирует QR или прикладывает карту",
-                                  color="blue")
-                        try:
+                        async def _run_pay():
                             with SessionLocal() as s:
-                                result = await kaspi_service.pay(s, total)
+                                return await kaspi_service.pay(s, total)
+
+                        pay_task = asyncio.create_task(_run_pay())
+                        try:
+                            result = await pay_task
+                        except asyncio.CancelledError:
+                            wait_dialog.close()
+                            ui.notify("Оплата отменена. Если клиент уже оплатил — проверьте статус на терминале.",
+                                      color="orange")
+                            return
                         except (ValueError, KaspiError) as e:
+                            wait_dialog.close()
                             ui.notify(str(e), color="red")
                             return
                         except Exception:
+                            wait_dialog.close()
                             ui.notify("Ошибка связи с терминалом. Чек не проведён.", color="red")
                             return
+                        wait_dialog.close()
                         if result.status != "success":
                             ui.notify(result.message or "Оплата не подтверждена терминалом. Чек не проведён.",
                                       color="red")
@@ -322,7 +344,7 @@ def sale_page() -> None:
                         dialog.close()
                         cart.clear()
                         render_cart()
-                        ui.notify(f"Заказ №{num} оплачен через Kaspi ({result.terminal_method}).", color="green")
+                        sale_success(num, f"Kaspi ({result.terminal_method})")
                         return
                     finally:
                         submit_btn.enable()
