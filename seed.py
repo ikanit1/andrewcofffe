@@ -1,8 +1,18 @@
 """Стартовые данные: админ + пример меню. Запуск: python seed.py <telegram_id_админа>"""
 import sys
 
+from app.auth import hash_pin
 from app.db import SessionLocal, init_db
-from app.models import Category, Ingredient, Product, RecipeItem, User
+from app.models import (
+    Category,
+    Ingredient,
+    Modifier,
+    ModifierGroup,
+    Product,
+    ProductModifierGroup,
+    RecipeItem,
+    User,
+)
 
 
 def seed(admin_telegram_id: int) -> None:
@@ -12,6 +22,8 @@ def seed(admin_telegram_id: int) -> None:
             print("БД уже содержит данные — сид пропущен")
             return
         s.add(User(telegram_id=admin_telegram_id, name="Владелец", role="admin"))
+        s.add(User(telegram_id=admin_telegram_id + 1, name="Кассир", role="cashier",
+                   discount_limit_percent=10, pin_hash=hash_pin("1234")))
 
         coffee = Category(name="Кофе", sort_order=1)
         snacks = Category(name="Снеки", sort_order=2)
@@ -38,6 +50,16 @@ def seed(admin_telegram_id: int) -> None:
                 ingredient_id=croissant.id,
             ),
         ])
+
+        size = ModifierGroup(name="Объём", is_required=True)
+        s.add(size)
+        s.flush()
+        s.add_all([
+            Modifier(group_id=size.id, name="M", price_delta_tiyn=0),
+            Modifier(group_id=size.id, name="L", price_delta_tiyn=20000),
+            ProductModifierGroup(product_id=latte.id, group_id=size.id),
+        ])
+
         s.commit()
         print("Готово: админ и пример меню созданы")
 
