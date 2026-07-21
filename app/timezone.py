@@ -1,4 +1,4 @@
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from app.models.inventory import utcnow
@@ -7,6 +7,8 @@ ALMATY = ZoneInfo("Asia/Almaty")
 
 
 def to_almaty(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        raise ValueError("Ожидается datetime с tzinfo (aware), получен naive")
     return dt.astimezone(ALMATY)
 
 

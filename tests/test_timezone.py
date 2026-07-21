@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
 
+import pytest
+
 from app.timezone import now_almaty, to_almaty, today_bounds_utc
 
 
@@ -30,3 +32,8 @@ def test_today_bounds_utc_before_almaty_midnight_uses_previous_utc_day():
     start, end = today_bounds_utc(now)
     assert start == datetime(2026, 7, 19, 19, 0, tzinfo=timezone.utc)
     assert end == datetime(2026, 7, 20, 19, 0, tzinfo=timezone.utc)
+
+
+def test_to_almaty_rejects_naive_datetime():
+    with pytest.raises(ValueError):
+        to_almaty(datetime(2026, 7, 21, 10, 0))

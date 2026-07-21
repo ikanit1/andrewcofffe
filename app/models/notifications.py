@@ -14,7 +14,7 @@ class NotificationOutbox(Base):
     __tablename__ = "notification_outbox"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    kind: Mapped[str]  # "shift_open" | "shift_close" | "collection" | "refund" | "low_stock"
+    kind: Mapped[str]  # см. NotificationKind в notification_service.py
     text: Mapped[str]
     status: Mapped[str] = mapped_column(default="pending")  # "pending" | "sent" | "failed"
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
