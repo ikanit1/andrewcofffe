@@ -1,4 +1,4 @@
-from sqlalchemy import func, select
+from sqlalchemy import exists, func, select
 from sqlalchemy.orm import Session
 
 from app.models import CashCollection, Order, Payment, Refund, Shift
@@ -34,7 +34,7 @@ def _sum(session: Session, stmt) -> int:
 
 
 def expected_cash_tiyn(session: Session, shift_id: int) -> int:
-    """Ожидаемая наличность = старт + продажи наличными − инкассации − возвраты."""
+    """Ожидаемая наличность = старт + продажи наличными − инкассации − возвраты по наличным чекам."""
     sh = session.get(Shift, shift_id)
     if sh is None:
         raise ValueError(f"Смена {shift_id} не найдена")
@@ -48,11 +48,17 @@ def expected_cash_tiyn(session: Session, shift_id: int) -> int:
         session,
         select(func.sum(CashCollection.amount_tiyn)).where(CashCollection.shift_id == shift_id),
     )
+    # В кассе физически лежат только наличные — возврат Kaspi/карты не трогает кассу.
+    # Заказ считается "наличным" только если ВСЕ его оплаты — cash (сплит-оплата
+    # наличные+безнал сейчас не создаётся из UI, это упрощение задокументировано).
+    non_cash_payment = select(Payment.id).where(
+        Payment.order_id == Order.id, Payment.method != "cash"
+    )
     refunds = _sum(
         session,
         select(func.sum(Refund.amount_tiyn))
         .join(Order, Order.id == Refund.order_id)
-        .where(Order.shift_id == shift_id),
+        .where(Order.shift_id == shift_id, ~exists(non_cash_payment)),
     )
     return sh.opening_cash_tiyn + cash_sales - collections - refunds
 

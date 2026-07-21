@@ -60,6 +60,20 @@ def test_refund_reduces_expected_cash(session):
     assert ss.expected_cash_tiyn(session, sh.id) == 100000
 
 
+def test_non_cash_refund_does_not_reduce_expected_cash(session):
+    c = _cashier(session)
+    sh = ss.open_shift(session, cashier_id=c.id, opening_cash_tiyn=100000)
+    order = Order(shift_id=sh.id, number=1, status="paid",
+                  subtotal_tiyn=50000, total_tiyn=50000)
+    session.add(order)
+    session.flush()
+    session.add(Payment(order_id=order.id, method="kaspi_qr", amount_tiyn=50000))
+    session.add(Refund(order_id=order.id, amount_tiyn=50000, reason="брак", cashier_id=c.id))
+    session.commit()
+    # Kaspi-оплата не входит в кэш-продажи, и её возврат не должен уменьшать ожидаемую наличность
+    assert ss.expected_cash_tiyn(session, sh.id) == 100000
+
+
 def test_close_shift_records_discrepancy(session):
     c = _cashier(session)
     sh = ss.open_shift(session, cashier_id=c.id, opening_cash_tiyn=100000)
