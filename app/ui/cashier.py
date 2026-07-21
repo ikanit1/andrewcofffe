@@ -270,6 +270,8 @@ def refunds_page() -> None:
                     ui.label(f"№{o.number}: {names} — {o.total_tiyn/100:.2f} тг").classes("flex-1")
                     ui.button("Вернуть полностью",
                               on_click=lambda oid=o.id: _do_full_refund(oid))
+                    ui.button("Частичный возврат",
+                              on_click=lambda oid=o.id: _do_partial_refund(oid))
 
     def _do_full_refund(order_id: int) -> None:
         with ui.dialog() as dialog, ui.card():
@@ -292,6 +294,55 @@ def refunds_page() -> None:
                 refresh()
 
             ui.button("Подтвердить возврат", on_click=confirm, color="red")
+            ui.button("Отмена", on_click=dialog.close)
+        dialog.open()
+
+    def _do_partial_refund(order_id: int) -> None:
+        with SessionLocal() as session:
+            items = session.query(OrderItem).filter_by(order_id=order_id).all()
+        remaining = [(it, it.qty - it.refunded_qty) for it in items if it.qty - it.refunded_qty > 0]
+
+        with ui.dialog() as dialog, ui.card():
+            ui.label("Частичный возврат").classes("text-lg")
+            if not remaining:
+                ui.label("Нечего возвращать").classes("text-gray-500")
+                ui.button("Закрыть", on_click=dialog.close)
+                dialog.open()
+                return
+
+            qty_inputs: dict[int, object] = {}
+            for it, rem in remaining:
+                with ui.row().classes("items-center gap-3"):
+                    ui.label(f"{it.name} (куплено {it.qty}, доступно к возврату {rem})").classes("flex-1")
+                    q = ui.number("Вернуть", value=0, min=0, max=rem, format="%.0f")
+                    qty_inputs[it.id] = q
+
+            reason = ui.input("Причина")
+
+            def confirm() -> None:
+                if not reason.value or not reason.value.strip():
+                    ui.notify("Укажите причину", color="red")
+                    return
+                item_qty = {
+                    item_id: round(q.value)
+                    for item_id, q in qty_inputs.items()
+                    if q.value and q.value > 0
+                }
+                if not item_qty:
+                    ui.notify("Выберите хотя бы одну позицию", color="red")
+                    return
+                try:
+                    with SessionLocal() as s:
+                        sales.refund_sale(s, order_id=order_id, cashier_id=uid,
+                                          reason=reason.value, item_qty=item_qty)
+                except ValueError as e:
+                    ui.notify(str(e), color="red")
+                    return
+                dialog.close()
+                ui.notify("Возврат оформлен", color="green")
+                refresh()
+
+            ui.button("Оформить возврат", on_click=confirm, color="red")
             ui.button("Отмена", on_click=dialog.close)
         dialog.open()
 
