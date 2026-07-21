@@ -17,7 +17,7 @@ from app.models import (
     RefundItem,
     User,
 )
-from app.services import costing, pricing
+from app.services import costing, modifier_service, pricing
 from app.services.inventory_service import apply_move
 from app.services.pricing import CartLine, PaymentInput
 from app.services.shift_service import current_open_shift
@@ -75,6 +75,10 @@ def create_sale(
             if m is None or not m.is_active:
                 raise ValueError(f"Модификатор {mid} недоступен")
             mods.append(m)
+        chosen_ids = set(li.modifier_ids)
+        for group, group_mods in modifier_service.groups_for_product(session, product.id):
+            if group.is_required and not (chosen_ids & {m.id for m in group_mods}):
+                raise ValueError(f"Не выбрана обязательная группа: {group.name}")
         cart_line = CartLine(
             base_price_tiyn=product.price_tiyn,
             qty=li.qty,

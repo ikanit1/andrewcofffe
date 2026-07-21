@@ -184,3 +184,30 @@ def test_write_failure_rolls_back(session, monkeypatch):
     # откат: заказа нет, склад не тронут, сессия пригодна для дальнейших запросов
     assert session.query(Order).count() == 0
     assert session.get(Ingredient, milk.id).stock_qty == 1000
+
+
+def test_required_modifier_group_enforced_server_side(session):
+    cashier, latte, milk, beans, shift = _setup(session)
+    from app.models import ModifierGroup, Modifier, ProductModifierGroup
+    grp = ModifierGroup(name="Объём", is_required=True)
+    session.add(grp)
+    session.flush()
+    m = Modifier(group_id=grp.id, name="L", price_delta_tiyn=20000)
+    session.add(m)
+    session.flush()
+    session.add(ProductModifierGroup(product_id=latte.id, group_id=grp.id))
+    session.commit()
+
+    # без выбора обязательного модификатора — отказ, ничего не создаётся
+    with pytest.raises(ValueError):
+        sales.create_sale(session, cashier_id=cashier.id, lines=[_line(latte.id)],
+                          payments=[PaymentInput("cash", 150000, 150000)])
+    assert session.query(Order).count() == 0
+
+    # с выбором — проходит
+    order = sales.create_sale(
+        session, cashier_id=cashier.id,
+        lines=[_line(latte.id, modifier_ids=[m.id])],
+        payments=[PaymentInput("cash", 170000, 170000)],
+    )
+    assert order.total_tiyn == 170000
