@@ -221,6 +221,10 @@ def sale_page() -> None:
                 amount_b_label.set_text(f"Сумма способа 2: {remainder / 100:.2f} тг")
                 tendered_a.set_visibility(method_a.value == "cash")
                 tendered_b.set_visibility(method_b.value == "cash")
+                if method_a.value == "cash" and not tendered_a.value:
+                    tendered_a.value = amount_a.value or 0
+                if method_b.value == "cash" and not tendered_b.value:
+                    tendered_b.value = remainder / 100
 
             def toggle_mode() -> None:
                 single_col.set_visibility(not split.value)
@@ -234,12 +238,12 @@ def sale_page() -> None:
             method_b.on_value_change(lambda e: refresh_split())
             toggle_mode()
 
-            def _cash_payment(method_name: str, amount_tiyn: int, tendered_field) -> PaymentInput | None:
+            def _cash_payment(method_name: str, amount_tiyn: int, tendered_field, label: str) -> PaymentInput | None:
                 if method_name != "cash":
                     return PaymentInput(method_name, amount_tiyn, None)
                 tnd = round((tendered_field.value or 0) * 100)
                 if tnd < amount_tiyn:
-                    ui.notify("Получено меньше суммы по наличному способу", color="red")
+                    ui.notify(f"Получено меньше суммы по {label} (наличные)", color="red")
                     return None
                 return PaymentInput("cash", amount_tiyn, tnd)
 
@@ -250,10 +254,10 @@ def sale_page() -> None:
                         ui.notify("Сумма способа 1 должна быть больше 0 и меньше итога", color="red")
                         return
                     amt_b = total - amt_a
-                    pay_a = _cash_payment(method_a.value, amt_a, tendered_a)
+                    pay_a = _cash_payment(method_a.value, amt_a, tendered_a, "способу 1")
                     if pay_a is None:
                         return
-                    pay_b = _cash_payment(method_b.value, amt_b, tendered_b)
+                    pay_b = _cash_payment(method_b.value, amt_b, tendered_b, "способу 2")
                     if pay_b is None:
                         return
                     payments = [pay_a, pay_b]
