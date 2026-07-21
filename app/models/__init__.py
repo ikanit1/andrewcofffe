@@ -7,6 +7,7 @@ from app.models.catalog import (
     ProductModifierGroup,
 )
 from app.models.inventory import Ingredient, RecipeItem, StockMove
+from app.models.kaspi import KaspiSettings
 from app.models.notifications import NotificationOutbox
 from app.models.orders import Order, OrderItem, OrderItemModifier
 from app.models.payments import Payment, Refund, RefundItem
@@ -17,6 +18,7 @@ __all__ = [
     "CashCollection",
     "Category",
     "Ingredient",
+    "KaspiSettings",
     "Modifier",
     "ModifierGroup",
     "ModifierItem",

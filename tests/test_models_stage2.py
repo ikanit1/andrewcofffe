@@ -100,3 +100,21 @@ def test_payment_and_refund(session):
     assert pays[1].tendered_tiyn is None
     assert session.query(Refund).one().reason == "брак"
     assert session.query(RefundItem).one().qty == 1
+
+
+def test_payment_terminal_fields_default_and_set(session):
+    order = _paid_order(session)
+    session.add_all([
+        Payment(order_id=order.id, method="cash", amount_tiyn=100000),
+        Payment(order_id=order.id, method="kaspi_terminal", amount_tiyn=70000,
+                provider="terminal", terminal_method="qr", transaction_id="504711333"),
+    ])
+    session.commit()
+    manual = session.query(Payment).filter_by(method="cash").one()
+    assert manual.provider == "manual"
+    assert manual.terminal_method is None
+    assert manual.transaction_id is None
+    term = session.query(Payment).filter_by(method="kaspi_terminal").one()
+    assert term.provider == "terminal"
+    assert term.terminal_method == "qr"
+    assert term.transaction_id == "504711333"

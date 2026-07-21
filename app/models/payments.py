@@ -17,6 +17,9 @@ class Payment(Base):
     tendered_tiyn: Mapped[int | None] = mapped_column(default=None)  # получено (наличные)
     change_tiyn: Mapped[int | None] = mapped_column(default=None)  # сдача (наличные)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    provider: Mapped[str] = mapped_column(default="manual")  # "manual" | "terminal"
+    terminal_method: Mapped[str | None] = mapped_column(default=None)  # "qr" | "card" | "alaqan"
+    transaction_id: Mapped[str | None] = mapped_column(default=None)  # orderNumber (qr/alaqan) или rrn (card)
 
 
 class Refund(Base):
