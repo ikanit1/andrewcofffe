@@ -9,6 +9,8 @@ from app.services.pricing import PaymentInput
 from app.services import pricing
 from app.models import Modifier, Order, OrderItem
 from app.ui.guard import current_user_id, require_user
+from app.kaspi import service as kaspi_service
+from app.kaspi.client import KaspiError
 
 
 @ui.page("/cashier")
@@ -201,7 +203,9 @@ def sale_page() -> None:
 
             single_col = ui.column()
             with single_col:
-                method = ui.select({"cash": "Наличные", "card": "Карта", "kaspi_qr": "Kaspi QR"},
+                method = ui.select({"cash": "Наличные", "card": "Карта",
+                                    "kaspi_qr": "Kaspi QR (вручную)",
+                                    "kaspi_terminal": "Kaspi (терминал)"},
                                    label="Способ", value="cash")
                 tendered = ui.number("Получено (наличные), тг", value=total / 100, format="%.0f")
 
@@ -247,7 +251,48 @@ def sale_page() -> None:
                     return None
                 return PaymentInput("cash", amount_tiyn, tnd)
 
-            def confirm_payment() -> None:
+            async def confirm_payment() -> None:
+                # Терминальная Kaspi-оплата: только как единственный способ (не в split)
+                if not split.value and method.value == "kaspi_terminal":
+                    if total % 100 != 0:
+                        ui.notify("Kaspi принимает только целые тенге", color="red")
+                        return
+                    ui.notify("Ожидание оплаты на терминале… клиент сканирует QR или прикладывает карту",
+                              color="blue")
+                    try:
+                        with SessionLocal() as s:
+                            result = await kaspi_service.pay(s, total)
+                    except (ValueError, KaspiError) as e:
+                        ui.notify(str(e), color="red")
+                        return
+                    except Exception:
+                        ui.notify("Ошибка связи с терминалом. Чек не проведён.", color="red")
+                        return
+                    if result.status != "success":
+                        ui.notify(result.message or "Оплата не подтверждена терминалом. Чек не проведён.",
+                                  color="red")
+                        return
+                    try:
+                        with SessionLocal() as s:
+                            lines = [sales.SaleLineInput(product_id=c["product_id"], qty=c["qty"],
+                                                         modifier_ids=c["modifier_ids"]) for c in cart]
+                            order = sales.create_sale(
+                                s, cashier_id=uid, lines=lines,
+                                payments=[PaymentInput("kaspi_terminal", total, None,
+                                                       provider="terminal",
+                                                       terminal_method=result.terminal_method,
+                                                       transaction_id=result.transaction_id)],
+                            )
+                            num = order.number
+                    except (ValueError, PermissionError) as e:
+                        ui.notify(f"Оплата прошла, но чек не сохранён: {e}", color="red")
+                        return
+                    dialog.close()
+                    cart.clear()
+                    render_cart()
+                    ui.notify(f"Заказ №{num} оплачен через Kaspi ({result.terminal_method}).", color="green")
+                    return
+                # --- дальше прежняя (синхронная) логика для остальных способов ---
                 if split.value:
                     amt_a = round((amount_a.value or 0) * 100)
                     if amt_a <= 0 or amt_a >= total:
