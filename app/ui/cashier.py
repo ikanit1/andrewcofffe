@@ -41,6 +41,7 @@ def cashier_page() -> None:
     ui.label(f"Смена открыта (№{shift.id})").classes("text-lg text-green-700")
     ui.button("Экран продажи", on_click=lambda: ui.navigate.to("/cashier/sale"))
     ui.button("Возвраты", on_click=lambda: ui.navigate.to("/cashier/refunds"))
+    ui.button("Приход товара", on_click=lambda: ui.navigate.to("/stock/purchase"))
 
     with ui.expansion("Инкассация").classes("w-full max-w-md"):
         amt = ui.number("Сумма изъятия, тг", value=0, min=0, format="%.0f")

@@ -14,6 +14,10 @@ def admin_stock_page() -> None:
 
     ui.label("Склад: позиции и тех-карты").classes("text-2xl font-bold")
 
+    with ui.row().classes("gap-2"):
+        ui.button("Дашборд", on_click=lambda: ui.navigate.to("/admin/dashboard"))
+        ui.button("Приход товара", on_click=lambda: ui.navigate.to("/stock/purchase"))
+
     ing_container = ui.column().classes("w-full max-w-3xl gap-1")
 
     def refresh_ingredients() -> None:

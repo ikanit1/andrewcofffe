@@ -7,4 +7,5 @@ def register_pages() -> None:
         admin_stock,
         cashier,
         login,
+        purchase,
     )
