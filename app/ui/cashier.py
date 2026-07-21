@@ -183,20 +183,24 @@ def sale_page() -> None:
             total += pricing.line_total_tiyn(line)
         return total
 
+    def clear_cart() -> None:
+        cart.clear()
+        render_cart()
+
     def render_cart() -> None:
         cart_col.clear()
         with cart_col:
-            ui.label("Чек").classes("text-xl")
+            with ui.row().classes("w-full items-center justify-between"):
+                ui.label("Чек").classes("text-2xl font-bold")
+                if cart:
+                    ui.button("Очистить чек", icon="delete",
+                              on_click=clear_cart).props("flat color=red")
             if not cart:
-                ui.label("Пусто").classes("text-gray-500")
+                ui.label("Пусто").classes("text-gray-500 text-lg")
             for idx, c in enumerate(cart):
                 label = c["name"] + (f" [{', '.join(c['mod_labels'])}]" if c["mod_labels"] else "")
-                with ui.row().classes("items-center gap-2"):
-                    ui.label(f"{label} ×{c['qty']}").classes("flex-1")
-
-                    def inc(i=idx) -> None:
-                        cart[i]["qty"] += 1
-                        render_cart()
+                with ui.row().classes("items-center gap-2 w-full"):
+                    ui.label(label).classes("flex-1 text-lg")
 
                     def dec(i=idx) -> None:
                         cart[i]["qty"] -= 1
@@ -204,12 +208,17 @@ def sale_page() -> None:
                             cart.pop(i)
                         render_cart()
 
-                    ui.button("−", on_click=dec)
-                    ui.button("+", on_click=inc)
+                    def inc(i=idx) -> None:
+                        cart[i]["qty"] += 1
+                        render_cart()
+
+                    ui.button("−", on_click=dec).props("round").classes("text-xl")
+                    ui.label(f"{c['qty']}").classes("text-xl font-bold w-8 text-center")
+                    ui.button("+", on_click=inc).props("round").classes("text-xl")
             ui.separator()
-            ui.label(f"Итого: {cart_total_tiyn()/100:.2f} тг").classes("text-lg font-bold")
+            ui.label(f"Итого: {cart_total_tiyn()/100:.0f} тг").classes("text-2xl font-bold")
             if cart:
-                ui.button("Оплата", on_click=open_payment).classes("w-full")
+                ui.button("Оплата", on_click=open_payment).classes("w-full h-16 text-xl")
 
     def open_payment() -> None:
         total = cart_total_tiyn()
@@ -362,10 +371,8 @@ def sale_page() -> None:
                 dialog.close()
                 cart.clear()
                 render_cart()
-                msg = f"Заказ №{num} проведён."
-                if change:
-                    msg += f" Сдача: {change/100:.2f} тг"
-                ui.notify(msg, color="green")
+                extra = f"Сдача: {change/100:.0f} тг" if change else ""
+                sale_success(num, extra)
 
             submit_btn = ui.button("Провести", on_click=confirm_payment)
             ui.button("Отмена", on_click=dialog.close)
