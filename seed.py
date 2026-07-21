@@ -6,6 +6,7 @@ from app.db import SessionLocal, init_db
 from app.models import (
     Category,
     Ingredient,
+    KaspiSettings,
     Modifier,
     ModifierGroup,
     Product,
@@ -60,6 +61,8 @@ def seed(admin_telegram_id: int) -> None:
             Modifier(group_id=size.id, name="L", price_delta_tiyn=20000),
             ProductModifierGroup(product_id=latte.id, group_id=size.id),
         ])
+
+        s.add(KaspiSettings(id=1))
 
         s.commit()
         print("Готово: админ и пример меню созданы")
