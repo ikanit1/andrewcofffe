@@ -336,7 +336,9 @@ def refunds_page() -> None:
                         sales.refund_sale(s, order_id=order_id, cashier_id=uid,
                                           reason=reason.value, item_qty=item_qty)
                 except ValueError as e:
-                    ui.notify(str(e), color="red")
+                    dialog.close()
+                    ui.notify(f"{e}. Данные обновлены, откройте возврат заново.", color="red")
+                    refresh()
                     return
                 dialog.close()
                 ui.notify("Возврат оформлен", color="green")
