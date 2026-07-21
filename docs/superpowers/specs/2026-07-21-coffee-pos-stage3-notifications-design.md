@@ -67,7 +67,10 @@ sent_at: datetime | None
 админов между постановкой в очередь и отправкой.
 
 ### `notification_service.py`
-- `enqueue(session, *, kind, text) -> NotificationOutbox` — только `add`+`commit`.
+- `enqueue(session, *, kind, text) -> NotificationOutbox` — только `add`+`flush`, без
+  `commit` (уведомление должно попасть в ту же атомарную транзакцию, что и бизнес-действие
+  — см. «Точки вызова enqueue» ниже: если транзакция откатится, уведомление не должно
+  остаться в очереди).
 - `pending(session) -> list[NotificationOutbox]`.
 - `mark_sent(session, id)` / `mark_failed(session, id)`.
 
