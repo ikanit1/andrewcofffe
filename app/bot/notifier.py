@@ -34,9 +34,14 @@ async def _drain_once(bot: Bot) -> None:
             ).all()
         ]
         for note in notes:
-            try:
-                for tg_id in admin_ids:
+            delivered = False
+            for tg_id in admin_ids:
+                try:
                     await bot.send_message(tg_id, note.text)
+                    delivered = True
+                except Exception:
+                    logger.exception(
+                        "Не удалось отправить уведомление %s админу %s", note.id, tg_id
+                    )
+            if delivered:
                 ns.mark_sent(session, note.id)
-            except Exception:
-                logger.exception("Не удалось отправить уведомление %s", note.id)
