@@ -17,6 +17,7 @@ def admin_stock_page() -> None:
     with ui.row().classes("gap-2"):
         ui.button("Дашборд", on_click=lambda: ui.navigate.to("/admin/dashboard"))
         ui.button("Приход товара", on_click=lambda: ui.navigate.to("/stock/purchase"))
+        ui.button("Kaspi терминал", on_click=lambda: ui.navigate.to("/admin/kaspi"))
 
     ing_container = ui.column().classes("w-full max-w-3xl gap-1")
 
