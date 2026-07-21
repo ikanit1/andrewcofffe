@@ -1,7 +1,5 @@
 from datetime import datetime, timezone
 
-import pytest
-
 from app.timezone import now_almaty, to_almaty, today_bounds_utc
 
 
@@ -34,6 +32,8 @@ def test_today_bounds_utc_before_almaty_midnight_uses_previous_utc_day():
     assert end == datetime(2026, 7, 20, 19, 0, tzinfo=timezone.utc)
 
 
-def test_to_almaty_rejects_naive_datetime():
-    with pytest.raises(ValueError):
-        to_almaty(datetime(2026, 7, 21, 10, 0))
+def test_to_almaty_treats_naive_as_utc():
+    naive_dt = datetime(2026, 7, 21, 10, 0)  # так возвращает SQLite после перечитывания
+    almaty_dt = to_almaty(naive_dt)
+    assert almaty_dt.hour == 15
+    assert almaty_dt.utcoffset().total_seconds() == 5 * 3600

@@ -78,8 +78,9 @@ def test_today_summary_subtracts_actual_refund_amount(session):
                       reason="одну убрать", item_qty={item.id: 1})
 
     # order.created_at теряет tzinfo при перечитывании из SQLite после commit
-    # (expire_on_commit=True в тестовой фикстуре session) — значение по факту в UTC.
-    summary = ds.today_summary(session, now=order.created_at.replace(tzinfo=timezone.utc))
+    # (expire_on_commit=True в тестовой фикстуре session) — значение по факту в UTC;
+    # to_almaty теперь сам трактует naive datetime как UTC.
+    summary = ds.today_summary(session, now=order.created_at)
     assert summary.revenue_tiyn == 100000  # 200000 продано − 100000 реально возвращено
     assert summary.items_count == 1
 

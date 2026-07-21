@@ -7,8 +7,12 @@ ALMATY = ZoneInfo("Asia/Almaty")
 
 
 def to_almaty(dt: datetime) -> datetime:
+    """Переводит datetime в Asia/Almaty. Naive datetime трактуется как UTC —
+    SQLite не сохраняет offset для DateTime(timezone=True), поэтому значения,
+    перечитанные из БД в новой сессии, приходят naive, хотя по соглашению
+    проекта все datetime хранятся и создаются в UTC (см. utcnow())."""
     if dt.tzinfo is None:
-        raise ValueError("Ожидается datetime с tzinfo (aware), получен naive")
+        dt = dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(ALMATY)
 
 
