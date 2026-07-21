@@ -21,7 +21,8 @@ def seed(admin_telegram_id: int) -> None:
         if s.query(User).count() > 0:
             print("БД уже содержит данные — сид пропущен")
             return
-        s.add(User(telegram_id=admin_telegram_id, name="Владелец", role="admin"))
+        s.add(User(telegram_id=admin_telegram_id, name="Владелец", role="admin",
+                   pin_hash=hash_pin("9999")))
         s.add(User(telegram_id=admin_telegram_id + 1, name="Кассир", role="cashier",
                    discount_limit_percent=10, pin_hash=hash_pin("1234")))
 
