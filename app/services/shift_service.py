@@ -17,14 +17,16 @@ def open_shift(session: Session, *, cashier_id: int, opening_cash_tiyn: int) -> 
     if opening_cash_tiyn < 0:
         raise ValueError("Стартовая наличность не может быть отрицательной")
     cashier = session.get(User, cashier_id)
+    if cashier is None:
+        raise ValueError(f"Кассир {cashier_id} не найден")
     sh = Shift(cashier_id=cashier_id, opening_cash_tiyn=opening_cash_tiyn, status="open")
     session.add(sh)
     session.flush()
     notification_service.enqueue(
         session, kind="shift_open",
         text=(
-            f"Смена открыта: {cashier.name}, {to_almaty(sh.opened_at):%d.%m.%Y %H:%M}, "
-            f"старт {opening_cash_tiyn / 100:.2f} тг"
+            f"Смена открыта: {to_almaty(sh.opened_at):%d.%m.%Y %H:%M}, "
+            f"старт {opening_cash_tiyn / 100:.2f} тг, кассир: {cashier.name}"
         ),
     )
     session.commit()
@@ -38,11 +40,13 @@ def add_collection(session: Session, *, shift_id: int, amount_tiyn: int, note: s
     if sh is None:
         raise ValueError(f"Смена {shift_id} не найдена")
     cashier = session.get(User, sh.cashier_id)
+    if cashier is None:
+        raise ValueError(f"Кассир {sh.cashier_id} не найден")
     coll = CashCollection(shift_id=shift_id, amount_tiyn=amount_tiyn, note=note)
     session.add(coll)
     notification_service.enqueue(
         session, kind="collection",
-        text=f"Инкассация {amount_tiyn / 100:.2f} тг, смена №{shift_id}, {cashier.name}",
+        text=f"Инкассация {amount_tiyn / 100:.2f} тг, смена №{shift_id}, кассир: {cashier.name}",
     )
     session.commit()
     return coll
@@ -93,13 +97,16 @@ def close_shift(session: Session, *, shift_id: int, counted_cash_tiyn: int) -> S
     sh.closed_at = utcnow()
     sh.status = "closed"
     cashier = session.get(User, sh.cashier_id)
+    if cashier is None:
+        raise ValueError(f"Кассир {sh.cashier_id} не найден")
     diff = sh.counted_cash_tiyn - sh.expected_cash_tiyn
     notification_service.enqueue(
         session, kind="shift_close",
         text=(
-            f"Смена закрыта: {cashier.name}, {to_almaty(sh.closed_at):%d.%m.%Y %H:%M}, "
+            f"Смена закрыта: {to_almaty(sh.closed_at):%d.%m.%Y %H:%M}, "
             f"ожидалось {sh.expected_cash_tiyn / 100:.2f} тг, "
-            f"по факту {sh.counted_cash_tiyn / 100:.2f} тг, расхождение {diff / 100:+.2f} тг"
+            f"по факту {sh.counted_cash_tiyn / 100:.2f} тг, расхождение {diff / 100:+.2f} тг, "
+            f"кассир: {cashier.name}"
         ),
     )
     session.commit()

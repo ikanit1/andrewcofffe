@@ -239,11 +239,13 @@ def refund_sale(
         all_refunded = all(it.refunded_qty >= it.qty for it in items)
         order.status = "refunded" if all_refunded else "partially_refunded"
         cashier = session.get(User, cashier_id)
+        if cashier is None:
+            raise ValueError(f"Кассир {cashier_id} не найден")
         notification_service.enqueue(
             session, kind="refund",
             text=(
                 f"Возврат {refunded_amount / 100:.2f} тг по заказу №{order.number}, "
-                f"причина: {refund.reason}, {cashier.name}"
+                f"причина: {refund.reason}, кассир: {cashier.name}"
             ),
         )
         session.commit()

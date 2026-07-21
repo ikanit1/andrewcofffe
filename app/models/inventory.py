@@ -20,7 +20,7 @@ class Ingredient(Base):
     unit: Mapped[str]  # "г" | "мл" | "шт"
     stock_qty: Mapped[int] = mapped_column(default=0)  # кэш остатка в базовых единицах
     avg_cost_tiyn: Mapped[float] = mapped_column(default=0.0)  # тиын за базовую единицу
-    low_stock_threshold: Mapped[int] = mapped_column(default=0)
+    low_stock_threshold: Mapped[int] = mapped_column(default=0)  # 0 = отслеживание низкого остатка выключено (stock_qty < threshold никогда не станет True при threshold=0 и неотрицательном остатке)
     low_stock_notified: Mapped[bool] = mapped_column(default=False)
     is_active: Mapped[bool] = mapped_column(default=True)
 
