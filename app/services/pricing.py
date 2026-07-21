@@ -13,9 +13,12 @@ class CartLine:
 
 @dataclass
 class PaymentInput:
-    method: str  # "cash" | "card" | "kaspi_qr"
+    method: str  # "cash" | "card" | "kaspi_qr" | "kaspi_terminal"
     amount_tiyn: int
     tendered_tiyn: int | None = None
+    provider: str = "manual"  # "manual" | "terminal"
+    terminal_method: str | None = None  # "qr" | "card" | "alaqan"
+    transaction_id: str | None = None
 
 
 def line_unit_price_tiyn(line: CartLine) -> int:
@@ -87,7 +90,7 @@ def validate_payments(total_tiyn: int, payments: list[PaymentInput]) -> None:
     for pay in payments:
         if pay.amount_tiyn < 0:
             raise ValueError("Сумма оплаты не может быть отрицательной")
-        if pay.method not in ("cash", "card", "kaspi_qr"):
+        if pay.method not in ("cash", "card", "kaspi_qr", "kaspi_terminal"):
             raise ValueError(f"Неизвестный способ оплаты: {pay.method}")
     covered = sum(pay.amount_tiyn for pay in payments)
     if covered != total_tiyn:

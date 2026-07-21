@@ -144,6 +144,8 @@ def create_sale(
             session.add(Payment(
                 order_id=order.id, method=pay.method, amount_tiyn=pay.amount_tiyn,
                 tendered_tiyn=pay.tendered_tiyn, change_tiyn=change,
+                provider=pay.provider, terminal_method=pay.terminal_method,
+                transaction_id=pay.transaction_id,
             ))
 
         session.commit()

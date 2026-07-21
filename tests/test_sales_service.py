@@ -214,6 +214,22 @@ def test_required_modifier_group_enforced_server_side(session):
     assert order.total_tiyn == 170000
 
 
+def test_create_sale_stores_terminal_payment_fields(session):
+    cashier, latte, milk, beans, shift = _setup(session)
+    order = sales.create_sale(
+        session, cashier_id=cashier.id, lines=[_line(latte.id)],
+        payments=[PaymentInput("kaspi_terminal", 150000, None,
+                               provider="terminal", terminal_method="qr",
+                               transaction_id="504711333")],
+    )
+    from app.models import Payment
+    pay = session.query(Payment).filter_by(order_id=order.id).one()
+    assert pay.method == "kaspi_terminal"
+    assert pay.provider == "terminal"
+    assert pay.terminal_method == "qr"
+    assert pay.transaction_id == "504711333"
+
+
 def test_refund_enqueues_notification(session):
     cashier, latte, milk, beans, shift = _setup(session)
     order = sales.create_sale(session, cashier_id=cashier.id, lines=[_line(latte.id)],
