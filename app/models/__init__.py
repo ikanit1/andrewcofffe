@@ -7,6 +7,7 @@ from app.models.catalog import (
     ProductModifierGroup,
 )
 from app.models.inventory import Ingredient, RecipeItem, StockMove
+from app.models.notifications import NotificationOutbox
 from app.models.orders import Order, OrderItem, OrderItemModifier
 from app.models.payments import Payment, Refund, RefundItem
 from app.models.shifts import CashCollection, Shift
@@ -19,6 +20,7 @@ __all__ = [
     "Modifier",
     "ModifierGroup",
     "ModifierItem",
+    "NotificationOutbox",
     "Order",
     "OrderItem",
     "OrderItemModifier",
