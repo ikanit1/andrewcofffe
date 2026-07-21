@@ -17,9 +17,11 @@ def test_amount_to_tenge_rejects_fraction():
 class _FakeClient:
     """Фейковый клиент: отдаёт заранее заготовленные ответы status по очереди."""
 
-    def __init__(self, statuses):
+    def __init__(self, statuses, *, actualize_result=None, raise_actualize=False):
         self._statuses = list(statuses)
         self.payment_calls = []
+        self._actualize_result = actualize_result or {"status": "fail", "message": "Операция отменена"}
+        self._raise_actualize = raise_actualize
 
     async def payment(self, amount, *, owncheque=False):
         self.payment_calls.append(amount)
@@ -29,7 +31,9 @@ class _FakeClient:
         return self._statuses.pop(0)
 
     async def actualize(self, process_id):
-        return {"status": "fail", "message": "Операция отменена"}
+        if self._raise_actualize:
+            raise RuntimeError("actualize network fail")
+        return self._actualize_result
 
 
 def test_poll_returns_success():
@@ -84,3 +88,35 @@ def test_run_payment_unknown_calls_actualize():
     fake = _FakeClient([{"status": "wait"}, {"status": "wait"}])
     result = asyncio.run(ks.run_payment(fake, 150000, poll_interval=0, max_polls=2))
     assert result.status == "fail"
+
+
+def test_run_payment_unknown_then_actualize_success():
+    fake = _FakeClient([{"status": "wait"}, {"status": "wait"}],
+                       actualize_result={"status": "success", "transactionId": "R9",
+                                         "chequeInfo": {"method": "qr"}})
+    result = asyncio.run(ks.run_payment(fake, 150000, poll_interval=0, max_polls=2))
+    assert result.status == "success"
+    assert result.transaction_id == "R9"
+
+
+def test_run_payment_actualize_raises_returns_non_success():
+    fake = _FakeClient([{"status": "wait"}, {"status": "wait"}], raise_actualize=True)
+    result = asyncio.run(ks.run_payment(fake, 150000, poll_interval=0, max_polls=2))
+    assert result.status != "success"
+
+
+def test_poll_survives_transient_status_error():
+    class _Flaky:
+        def __init__(self):
+            self.calls = 0
+        async def status(self, pid):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("сеть моргнула")
+            return {"status": "success", "transactionId": "T1", "chequeInfo": {"method": "card"}}
+    data = asyncio.run(ks._poll_until_final(_Flaky(), "p1", poll_interval=0, max_polls=5))
+    assert data["status"] == "success"
+
+
+def test_map_result_missing_status_is_unknown():
+    assert ks._map_result({}).status == "unknown"

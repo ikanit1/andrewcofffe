@@ -6,7 +6,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 
 from app.kaspi import settings as ksettings
-from app.kaspi.client import KaspiClient, KaspiError
+from app.kaspi.client import KaspiClient
 
 logger = logging.getLogger(__name__)
 
@@ -29,10 +29,19 @@ def amount_to_tenge(total_tiyn: int) -> int:
 
 
 async def _poll_until_final(client, process_id: str, *, poll_interval: float, max_polls: int) -> dict:
-    """Опрашивает статус до финального состояния. По исчерпании попыток — unknown."""
+    """Опрашивает статус до финального состояния. По исчерпании попыток — unknown.
+
+    Транзиентный сбой опроса (сеть моргнула) не прерывает цикл: ошибка логируется,
+    попытка считается неуспешной, а по исчерпании попыток вернётся unknown — чтобы
+    вызывающий провёл сверку через actualize, а не потерял оплату без проверки.
+    """
     for _ in range(max_polls):
-        data = await client.status(process_id)
-        if data.get("status") != "wait":
+        try:
+            data = await client.status(process_id)
+        except Exception:
+            logger.exception("Ошибка опроса статуса %s", process_id)
+            data = None
+        if data is not None and data.get("status") != "wait":
             return data
         await asyncio.sleep(poll_interval)
     return {"status": "unknown", "message": "Таймаут ожидания оплаты"}
@@ -62,7 +71,7 @@ async def run_payment(client, total_tiyn: int, *, poll_interval: float = 1.0,
     if data.get("status") == "unknown":
         try:
             data = await client.actualize(process_id)
-        except KaspiError:
+        except Exception:
             logger.exception("actualize не удался для %s", process_id)
     return _map_result(data)
 

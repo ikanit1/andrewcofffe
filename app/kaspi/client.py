@@ -33,11 +33,14 @@ class KaspiClient:
             resp = await c.get(path, params=params or {}, headers=headers or {})
         if resp.status_code >= 400:
             raise KaspiError(resp.status_code, resp.text or f"HTTP {resp.status_code}")
-        body = resp.json()
+        try:
+            body = resp.json()
+        except ValueError:
+            raise KaspiError(resp.status_code, "Некорректный ответ терминала (не JSON)")
         if body.get("statusCode", 0) != 0:
             msg = body.get("errorText") or (body.get("data") or {}).get("message") or "Ошибка терминала"
             raise KaspiError(body.get("statusCode", -1), msg)
-        return body.get("data", {})
+        return body.get("data") or {}
 
     def _auth_headers(self) -> dict:
         return {"accesstoken": self._access_token} if self._access_token else {}
