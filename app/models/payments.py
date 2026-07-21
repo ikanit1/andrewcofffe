@@ -12,7 +12,7 @@ class Payment(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     order_id: Mapped[int] = mapped_column(ForeignKey("orders.id"), index=True)
-    method: Mapped[str]  # "cash" | "card" | "kaspi_qr"
+    method: Mapped[str]  # "cash" | "card" | "kaspi_qr" | "kaspi_terminal"
     amount_tiyn: Mapped[int]  # сколько этот способ покрывает в чеке
     tendered_tiyn: Mapped[int | None] = mapped_column(default=None)  # получено (наличные)
     change_tiyn: Mapped[int | None] = mapped_column(default=None)  # сдача (наличные)

@@ -7,7 +7,7 @@ from app.services import sales_service as sales
 from app.services.catalog_service import list_menu
 from app.services.pricing import PaymentInput
 from app.services import pricing
-from app.models import Modifier, Order, OrderItem
+from app.models import Modifier, Order, OrderItem, Payment
 from app.ui.guard import current_user_id, require_user
 from app.kaspi import service as kaspi_service
 from app.kaspi.client import KaspiError
@@ -385,15 +385,25 @@ def refunds_page() -> None:
                 items = session.query(OrderItem).filter_by(order_id=o.id).all()
                 names = ", ".join(f"{it.name}×{it.qty - it.refunded_qty}"
                                   for it in items if it.qty - it.refunded_qty > 0)
-                with ui.row().classes("items-center gap-3"):
-                    ui.label(f"№{o.number}: {names} — {o.total_tiyn/100:.2f} тг").classes("flex-1")
-                    ui.button("Вернуть полностью",
-                              on_click=lambda oid=o.id: _do_full_refund(oid))
-                    ui.button("Частичный возврат",
-                              on_click=lambda oid=o.id: _do_partial_refund(oid))
+                terminal_paid = session.query(Payment).filter_by(
+                    order_id=o.id, provider="terminal").first() is not None
+                with ui.column().classes("gap-0"):
+                    with ui.row().classes("items-center gap-3"):
+                        ui.label(f"№{o.number}: {names} — {o.total_tiyn/100:.2f} тг").classes("flex-1")
+                        ui.button("Вернуть полностью",
+                                  on_click=lambda oid=o.id: _do_full_refund(oid))
+                        ui.button("Частичный возврат",
+                                  on_click=lambda oid=o.id: _do_partial_refund(oid))
+                    if terminal_paid:
+                        ui.label("⚠ Оплачено через терминал Kaspi — деньги верните покупателю вручную на терминале").classes("text-orange-700 text-sm")
 
     def _do_full_refund(order_id: int) -> None:
+        with SessionLocal() as session:
+            terminal_paid = session.query(Payment).filter_by(
+                order_id=order_id, provider="terminal").first() is not None
         with ui.dialog() as dialog, ui.card():
+            if terminal_paid:
+                ui.label("⚠ Оплата была через терминал Kaspi. Возврат денег сделайте вручную на терминале — система деньги не вернёт.").classes("text-orange-700")
             ui.label("Причина возврата").classes("text-lg")
             reason = ui.input("Причина")
 
@@ -419,9 +429,13 @@ def refunds_page() -> None:
     def _do_partial_refund(order_id: int) -> None:
         with SessionLocal() as session:
             items = session.query(OrderItem).filter_by(order_id=order_id).all()
+            terminal_paid = session.query(Payment).filter_by(
+                order_id=order_id, provider="terminal").first() is not None
         remaining = [(it, it.qty - it.refunded_qty) for it in items if it.qty - it.refunded_qty > 0]
 
         with ui.dialog() as dialog, ui.card():
+            if terminal_paid:
+                ui.label("⚠ Оплата была через терминал Kaspi. Возврат денег сделайте вручную на терминале — система деньги не вернёт.").classes("text-orange-700")
             ui.label("Частичный возврат").classes("text-lg")
             if not remaining:
                 ui.label("Нечего возвращать").classes("text-gray-500")
