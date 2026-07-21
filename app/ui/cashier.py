@@ -9,6 +9,7 @@ from app.services.pricing import PaymentInput
 from app.services import pricing
 from app.models import Modifier, Order, OrderItem, Payment
 from app.ui.guard import current_user_id, require_user
+from app.ui.layout import cashier_header, sale_success
 from app.kaspi import service as kaspi_service
 from app.kaspi.client import KaspiError
 
@@ -18,6 +19,7 @@ def cashier_page() -> None:
     if not require_user():
         return
     uid = current_user_id()
+    cashier_header()
 
     with SessionLocal() as session:
         shift = ss.current_open_shift(session)
@@ -88,6 +90,7 @@ def sale_page() -> None:
     if not require_user():
         return
     uid = current_user_id()
+    cashier_header()
 
     with SessionLocal() as session:
         if ss.current_open_shift(session) is None:
@@ -364,6 +367,7 @@ def refunds_page() -> None:
     if not require_user():
         return
     uid = current_user_id()
+    cashier_header()
 
     ui.label("Возвраты").classes("text-2xl font-bold")
     box = ui.column().classes("w-full max-w-2xl gap-2")

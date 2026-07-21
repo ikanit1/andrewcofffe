@@ -7,12 +7,14 @@ from app.models import Ingredient, StockMove
 from app.services import inventory_service as inv
 from app.timezone import to_almaty
 from app.ui.guard import require_user
+from app.ui.layout import cashier_header
 
 
 @ui.page("/stock/purchase")
 def purchase_page() -> None:
     if not require_user():
         return
+    cashier_header()
 
     ui.label("Приход товара").classes("text-2xl font-bold")
 
