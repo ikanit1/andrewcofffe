@@ -1,3 +1,5 @@
+import asyncio
+
 from aiogram import Bot, Dispatcher
 from aiogram.filters import CommandStart
 from aiogram.types import (
@@ -43,4 +45,10 @@ async def run_bot() -> None:
     if not settings.bot_token:
         return
     bot = Bot(settings.bot_token)
-    await dp.start_polling(bot, handle_signals=False)
+    from app.bot.notifier import run_notifier
+
+    notifier_task = asyncio.create_task(run_notifier(bot))
+    try:
+        await dp.start_polling(bot, handle_signals=False)
+    finally:
+        notifier_task.cancel()
