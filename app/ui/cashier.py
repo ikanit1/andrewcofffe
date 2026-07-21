@@ -197,27 +197,88 @@ def sale_page() -> None:
         total = cart_total_tiyn()
         with ui.dialog() as dialog, ui.card():
             ui.label(f"К оплате: {total/100:.2f} тг").classes("text-xl")
-            method = ui.select({"cash": "Наличные", "card": "Карта", "kaspi_qr": "Kaspi QR"},
-                               label="Способ", value="cash")
-            tendered = ui.number("Получено (наличные), тг", value=total / 100, format="%.0f")
+            split = ui.checkbox("Разделить оплату")
+
+            single_col = ui.column()
+            with single_col:
+                method = ui.select({"cash": "Наличные", "card": "Карта", "kaspi_qr": "Kaspi QR"},
+                                   label="Способ", value="cash")
+                tendered = ui.number("Получено (наличные), тг", value=total / 100, format="%.0f")
+
+            split_col = ui.column()
+            with split_col:
+                method_a = ui.select({"cash": "Наличные", "card": "Карта", "kaspi_qr": "Kaspi QR"},
+                                     label="Способ 1", value="cash")
+                amount_a = ui.number("Сумма способа 1, тг", value=0, min=0, format="%.0f")
+                tendered_a = ui.number("Получено (наличные) способ 1, тг", value=0, format="%.0f")
+                method_b = ui.select({"cash": "Наличные", "card": "Карта", "kaspi_qr": "Kaspi QR"},
+                                     label="Способ 2", value="card")
+                amount_b_label = ui.label("")
+                tendered_b = ui.number("Получено (наличные) способ 2, тг", value=0, format="%.0f")
+
+            def refresh_split() -> None:
+                remainder = max(total - round((amount_a.value or 0) * 100), 0)
+                amount_b_label.set_text(f"Сумма способа 2: {remainder / 100:.2f} тг")
+                tendered_a.set_visibility(method_a.value == "cash")
+                tendered_b.set_visibility(method_b.value == "cash")
+
+            def toggle_mode() -> None:
+                single_col.set_visibility(not split.value)
+                split_col.set_visibility(split.value)
+                if split.value:
+                    refresh_split()
+
+            split.on_value_change(lambda e: toggle_mode())
+            amount_a.on_value_change(lambda e: refresh_split())
+            method_a.on_value_change(lambda e: refresh_split())
+            method_b.on_value_change(lambda e: refresh_split())
+            toggle_mode()
+
+            def _cash_payment(method_name: str, amount_tiyn: int, tendered_field) -> PaymentInput | None:
+                if method_name != "cash":
+                    return PaymentInput(method_name, amount_tiyn, None)
+                tnd = round((tendered_field.value or 0) * 100)
+                if tnd < amount_tiyn:
+                    ui.notify("Получено меньше суммы по наличному способу", color="red")
+                    return None
+                return PaymentInput("cash", amount_tiyn, tnd)
 
             def confirm_payment() -> None:
-                pay_method = method.value
-                if pay_method == "cash":
-                    tnd = round((tendered.value or 0) * 100)
-                    if tnd < total:
-                        ui.notify("Получено меньше суммы чека", color="red")
+                if split.value:
+                    amt_a = round((amount_a.value or 0) * 100)
+                    if amt_a <= 0 or amt_a >= total:
+                        ui.notify("Сумма способа 1 должна быть больше 0 и меньше итога", color="red")
                         return
-                    payments = [PaymentInput("cash", total, tnd)]
+                    amt_b = total - amt_a
+                    pay_a = _cash_payment(method_a.value, amt_a, tendered_a)
+                    if pay_a is None:
+                        return
+                    pay_b = _cash_payment(method_b.value, amt_b, tendered_b)
+                    if pay_b is None:
+                        return
+                    payments = [pay_a, pay_b]
+                    change = sum(
+                        (p.tendered_tiyn - p.amount_tiyn) for p in payments
+                        if p.method == "cash" and p.tendered_tiyn is not None
+                    )
                 else:
-                    payments = [PaymentInput(pay_method, total, None)]
+                    pay_method = method.value
+                    if pay_method == "cash":
+                        tnd = round((tendered.value or 0) * 100)
+                        if tnd < total:
+                            ui.notify("Получено меньше суммы чека", color="red")
+                            return
+                        payments = [PaymentInput("cash", total, tnd)]
+                        change = tnd - total
+                    else:
+                        payments = [PaymentInput(pay_method, total, None)]
+                        change = 0
                 try:
                     with SessionLocal() as s:
                         lines = [sales.SaleLineInput(product_id=c["product_id"], qty=c["qty"],
                                                      modifier_ids=c["modifier_ids"]) for c in cart]
                         order = sales.create_sale(s, cashier_id=uid, lines=lines, payments=payments)
                         num = order.number
-                        change = payments[0].tendered_tiyn - total if pay_method == "cash" else 0
                 except (ValueError, PermissionError) as e:
                     ui.notify(str(e), color="red")
                     return
