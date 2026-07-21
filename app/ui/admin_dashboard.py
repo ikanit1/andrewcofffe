@@ -32,8 +32,9 @@ def admin_dashboard_page() -> None:
                 ui.label("Смена закрыта").classes("text-gray-500")
             else:
                 cashier = session.get(User, shift.cashier_id)
+                cashier_name = cashier.name if cashier is not None else "неизвестен"
                 ui.label(
-                    f"Смена открыта: {cashier.name}, с {to_almaty(shift.opened_at):%d.%m %H:%M}"
+                    f"Смена открыта: {cashier_name}, с {to_almaty(shift.opened_at):%d.%m.%Y %H:%M}"
                 ).classes("text-green-700")
 
             ui.label("На исходе").classes("text-xl mt-4")

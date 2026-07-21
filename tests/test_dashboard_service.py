@@ -1,7 +1,9 @@
 from datetime import datetime, timedelta, timezone
 
-from app.models import Ingredient, Order, OrderItem, Shift, User
+from app.models import Category, Ingredient, Order, OrderItem, Product, Refund, Shift, User
 from app.services import dashboard_service as ds
+from app.services import sales_service as sales
+from app.services.pricing import PaymentInput
 
 
 def _shift(session):
@@ -55,6 +57,31 @@ def test_today_summary_subtracts_refunded_qty(session):
            items_qty=3, refunded_qty=1)
     summary = ds.today_summary(session, now=now)
     assert summary.items_count == 2
+
+
+def test_today_summary_subtracts_actual_refund_amount(session):
+    sh = _shift(session)
+    cat = Category(name="Кофе")
+    session.add(cat)
+    session.commit()
+    latte = Product(name="Латте", category_id=cat.id, kind="prepared", price_tiyn=100000)
+    session.add(latte)
+    session.commit()
+
+    order = sales.create_sale(
+        session, cashier_id=sh.cashier_id,
+        lines=[sales.SaleLineInput(product_id=latte.id, qty=2)],
+        payments=[PaymentInput("cash", 200000, 200000)],
+    )
+    item = session.query(OrderItem).filter_by(order_id=order.id).one()
+    sales.refund_sale(session, order_id=order.id, cashier_id=sh.cashier_id,
+                      reason="одну убрать", item_qty={item.id: 1})
+
+    # order.created_at теряет tzinfo при перечитывании из SQLite после commit
+    # (expire_on_commit=True в тестовой фикстуре session) — значение по факту в UTC.
+    summary = ds.today_summary(session, now=order.created_at.replace(tzinfo=timezone.utc))
+    assert summary.revenue_tiyn == 100000  # 200000 продано − 100000 реально возвращено
+    assert summary.items_count == 1
 
 
 def test_low_stock_ingredients_lists_only_active_below_threshold(session):

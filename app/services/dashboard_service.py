@@ -4,7 +4,7 @@ from datetime import datetime
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models import Ingredient, Order, OrderItem
+from app.models import Ingredient, Order, OrderItem, Refund
 from app.timezone import today_bounds_utc
 
 
@@ -24,15 +24,23 @@ def today_summary(session: Session, *, now: datetime | None = None) -> TodaySumm
             Order.status != "refunded",
         )
     ).all()
-    revenue = sum(o.total_tiyn for o in orders)
     order_ids = [o.id for o in orders]
+    gross_revenue = sum(o.total_tiyn for o in orders)
+    refunded_amount = 0
     items_count = 0
     if order_ids:
+        refunded_amount = session.scalar(
+            select(func.sum(Refund.amount_tiyn)).where(Refund.order_id.in_(order_ids))
+        ) or 0
         items_count = session.scalar(
             select(func.sum(OrderItem.qty - OrderItem.refunded_qty))
             .where(OrderItem.order_id.in_(order_ids))
         ) or 0
-    return TodaySummary(revenue_tiyn=revenue, orders_count=len(orders), items_count=items_count)
+    return TodaySummary(
+        revenue_tiyn=gross_revenue - refunded_amount,
+        orders_count=len(orders),
+        items_count=items_count,
+    )
 
 
 def low_stock_ingredients(session: Session) -> list[Ingredient]:
