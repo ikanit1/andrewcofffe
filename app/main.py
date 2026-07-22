@@ -20,9 +20,17 @@ def create_app(start_bot: bool = True) -> FastAPI:
 
             bot_task = asyncio.create_task(run_bot())
             bot_task.add_done_callback(_log_bot_exit)
+        backup_task = None
+        if settings.backup_enabled:
+            from app.services.backup_scheduler import run_backup_scheduler
+
+            backup_task = asyncio.create_task(run_backup_scheduler())
+            backup_task.add_done_callback(_log_task_exit)
         yield
         if bot_task is not None:
             bot_task.cancel()
+        if backup_task is not None:
+            backup_task.cancel()
 
     app = FastAPI(title="Coffee POS", lifespan=lifespan)
     if settings.storage_secret == "change-me-in-env":
@@ -46,6 +54,14 @@ def _log_bot_exit(task: asyncio.Task) -> None:
     exc = task.exception()
     if exc is not None:
         logger.error("Telegram-бот упал: %r", exc)
+
+
+def _log_task_exit(task: asyncio.Task) -> None:
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.error("Фоновая задача упала: %r", exc)
 
 
 if __name__ == "__main__":
