@@ -3,6 +3,7 @@ from nicegui import app, ui
 from app.db import SessionLocal
 from app.services import shift_service as ss
 from app.ui import guard
+from app.ui.theme import apply_theme
 
 
 def _logout() -> None:
@@ -12,6 +13,7 @@ def _logout() -> None:
 
 def cashier_header() -> None:
     """Верхняя панель на всех экранах кассы: имя кассира, статус смены, Домой, Выход."""
+    apply_theme()
     name = app.storage.user.get("name", "Кассир")
     with SessionLocal() as session:
         shift_open = ss.current_open_shift(session) is not None

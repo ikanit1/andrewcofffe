@@ -5,6 +5,7 @@ from sqlalchemy.exc import IntegrityError
 from app.db import SessionLocal
 from app.models import Ingredient, Modifier, ModifierGroup, Product
 from app.services import modifier_service as ms
+from app.ui.theme import apply_theme
 
 
 @ui.page("/admin/modifiers")
@@ -12,6 +13,7 @@ def admin_modifiers_page() -> None:
     from app.ui.guard import require_admin
     if not require_admin():
         return
+    apply_theme()
 
     ui.label("Модификаторы").classes("text-2xl font-bold")
 

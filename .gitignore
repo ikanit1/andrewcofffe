@@ -8,3 +8,4 @@ __pycache__/
 .nicegui/
 backups/
 logs/
+*.pdf

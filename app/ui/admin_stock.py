@@ -4,6 +4,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.db import SessionLocal
 from app.models import Ingredient, Product, RecipeItem
+from app.ui.theme import apply_theme
 
 
 @ui.page("/admin/stock")
@@ -11,6 +12,7 @@ def admin_stock_page() -> None:
     from app.ui.guard import require_admin
     if not require_admin():
         return
+    apply_theme()
 
     ui.label("Склад: позиции и тех-карты").classes("text-2xl font-bold")
 

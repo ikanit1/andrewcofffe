@@ -6,12 +6,14 @@ from app.services import dashboard_service as ds
 from app.services import shift_service as ss
 from app.timezone import to_almaty
 from app.ui.guard import require_admin
+from app.ui.theme import apply_theme
 
 
 @ui.page("/admin/dashboard")
 def admin_dashboard_page() -> None:
     if not require_admin():
         return
+    apply_theme()
 
     ui.label("Дашборд").classes("text-2xl font-bold")
 

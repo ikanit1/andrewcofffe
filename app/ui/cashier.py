@@ -164,7 +164,7 @@ def sale_page() -> None:
                             for p in products:
                                 card = ui.card().classes(
                                     "w-full h-28 items-center justify-center cursor-pointer "
-                                    "p-2 hover:bg-blue-50 transition"
+                                    "p-2 hover:bg-[#f5ece0] transition"
                                 )
                                 card.on("click", lambda p=p: add_to_cart(p))
                                 with card:

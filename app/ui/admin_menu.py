@@ -3,6 +3,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.db import SessionLocal
 from app.services import catalog_service as cs
+from app.ui.theme import apply_theme
 
 KIND_LABELS = {"prepared": "Приготовленный", "retail": "Штучный"}
 
@@ -12,6 +13,7 @@ def admin_menu_page() -> None:
     from app.ui.guard import require_admin
     if not require_admin():
         return
+    apply_theme()
 
     ui.label("Меню и цены").classes("text-2xl font-bold")
 
