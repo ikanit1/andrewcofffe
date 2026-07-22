@@ -69,3 +69,39 @@ def test_admin_telegram_ids_only_active_admins(session):
     _user(session, tid=11, role="admin", active=False)
     _user(session, tid=12, role="cashier", active=True)
     assert us.admin_telegram_ids(session) == [10]
+
+
+def test_create_user_and_login(session):
+    u = us.create_user(session, name="Новый", telegram_id=555, role="cashier", pin="4321")
+    assert u.id is not None
+    assert us.authenticate(session, user_id=u.id, pin="4321") is not None
+
+
+def test_create_user_duplicate_telegram_id(session):
+    us.create_user(session, name="A", telegram_id=555, role="cashier", pin="1111")
+    with pytest.raises(ValueError):
+        us.create_user(session, name="B", telegram_id=555, role="cashier", pin="2222")
+
+
+def test_create_user_bad_pin(session):
+    with pytest.raises(ValueError):
+        us.create_user(session, name="A", telegram_id=1, role="cashier", pin="12")
+
+
+def test_set_pin_changes_login(session):
+    u = _user(session, tid=7, pin="1111")
+    us.set_pin(session, u.id, "9999")
+    assert us.authenticate(session, user_id=u.id, pin="1111") is None
+    assert us.authenticate(session, user_id=u.id, pin="9999") is not None
+
+
+def test_set_active_blocks_last_admin(session):
+    a = _user(session, tid=1, role="admin")
+    with pytest.raises(ValueError):
+        us.set_active(session, a.id, False)
+
+
+def test_set_active_deactivates_cashier(session):
+    c = _user(session, tid=2, role="cashier")
+    us.set_active(session, c.id, False)
+    assert us.authenticate(session, user_id=c.id, pin="1234") is None

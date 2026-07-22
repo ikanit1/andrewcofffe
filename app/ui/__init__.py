@@ -4,6 +4,7 @@ def register_pages() -> None:
         admin_dashboard,
         admin_home,
         admin_menu,
+        admin_users,
         admin_modifiers,
         admin_stock,
         cashier,
