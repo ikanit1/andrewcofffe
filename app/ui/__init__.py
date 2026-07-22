@@ -10,4 +10,5 @@ def register_pages() -> None:
         kaspi_admin,
         login,
         purchase,
+        reports,
     )
