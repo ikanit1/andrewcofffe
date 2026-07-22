@@ -21,9 +21,14 @@ def kaspi_admin_page() -> None:
         name_value = s.cashier_name
         has_token = s.access_token is not None
         term_id = s.terminal_id
+        protection_value = s.protection_enabled
 
     url_in = ui.input("Адрес терминала", value=url_value).classes("w-full max-w-md")
     name_in = ui.input("Имя кассы", value=name_value).classes("w-full max-w-md")
+    protection_chk = ui.checkbox("«Защита интеграции» включена на терминале",
+                                 value=protection_value)
+    ui.label("Выключите, если терминал в закрытой локальной сети без защиты — тогда "
+             "оплата идёт по HTTP без регистрации кассы.").classes("text-sm text-gray-500")
     status_box = ui.column().classes("gap-1 mt-2")
 
     with status_box:
@@ -35,7 +40,8 @@ def kaspi_admin_page() -> None:
     def save_config() -> None:
         with SessionLocal() as session:
             ksettings.save_config(session, terminal_url=url_in.value.strip(),
-                                  cashier_name=name_in.value.strip())
+                                  cashier_name=name_in.value.strip(),
+                                  protection_enabled=protection_chk.value)
         ui.notify("Настройки сохранены", color="green")
 
     async def check() -> None:

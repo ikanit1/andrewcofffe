@@ -119,7 +119,7 @@ async def pay(session: Session, total_tiyn: int, *, poll_interval: float = 1.0,
               max_polls: int = 180) -> PaymentResult:
     """Оплата с настройками из БД. Требует зарегистрированной кассы (есть access_token)."""
     s = ksettings.get_settings(session)
-    if not s.access_token:
+    if s.protection_enabled and not s.access_token:
         raise ValueError("Касса не зарегистрирована на терминале (см. /admin/kaspi)")
     client = _build_client(s)
     return await run_payment(client, total_tiyn, poll_interval=poll_interval, max_polls=max_polls)

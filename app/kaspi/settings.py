@@ -15,10 +15,12 @@ def get_settings(session: Session) -> KaspiSettings:
     return s
 
 
-def save_config(session: Session, *, terminal_url: str, cashier_name: str) -> None:
+def save_config(session: Session, *, terminal_url: str, cashier_name: str,
+                protection_enabled: bool = True) -> None:
     s = get_settings(session)
     s.terminal_url = terminal_url
     s.cashier_name = cashier_name
+    s.protection_enabled = protection_enabled
     session.commit()
 
 

@@ -18,3 +18,6 @@ class KaspiSettings(Base):
     refresh_token: Mapped[str | None] = mapped_column(default=None)
     token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     terminal_id: Mapped[str | None] = mapped_column(default=None)
+    # «Защита интеграции» на терминале. True — нужна регистрация и HTTPS;
+    # False — закрытая сеть, оплата по HTTP без токена.
+    protection_enabled: Mapped[bool] = mapped_column(default=True)

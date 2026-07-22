@@ -56,6 +56,9 @@ def ensure_schema(engine: Engine) -> None:
             "terminal_method": "VARCHAR",
             "transaction_id": "VARCHAR",
         },
+        "kaspi_settings": {
+            "protection_enabled": "BOOLEAN NOT NULL DEFAULT 1",
+        },
     }
     with engine.begin() as conn:
         for table, columns in wanted.items():
