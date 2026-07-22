@@ -10,7 +10,7 @@ from app.services.catalog_service import list_menu
 from app.services.pricing import PaymentInput
 from app.services import pricing
 from app.models import Modifier, Order, OrderItem, Payment
-from app.ui.guard import current_user_id, require_user
+from app.ui.guard import current_user_id, is_admin, require_user
 from app.ui.layout import cashier_header, sale_success
 from app.kaspi import service as kaspi_service
 from app.kaspi.client import KaspiError
@@ -22,6 +22,9 @@ def cashier_page() -> None:
         return
     uid = current_user_id()
     cashier_header()
+    if is_admin():
+        ui.button("← Админ-панель", icon="grid_view",
+                  on_click=lambda: ui.navigate.to("/admin")).props("flat color=primary")
 
     with SessionLocal() as session:
         shift = ss.current_open_shift(session)

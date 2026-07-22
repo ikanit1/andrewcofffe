@@ -4,14 +4,14 @@ from app.db import SessionLocal
 from app.kaspi import service as kaspi_service
 from app.kaspi import settings as ksettings
 from app.ui.guard import require_admin
-from app.ui.theme import apply_theme
+from app.ui.layout import admin_header
 
 
 @ui.page("/admin/kaspi")
 def kaspi_admin_page() -> None:
     if not require_admin():
         return
-    apply_theme()
+    admin_header()
 
     ui.label("Настройка терминала Kaspi").classes("text-2xl font-bold")
 

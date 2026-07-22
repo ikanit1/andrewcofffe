@@ -45,7 +45,7 @@ def login_page() -> None:
                 ui.notify("Неверный пин-код", color="red")
                 return
             login_user(user)
-            ui.navigate.to("/cashier")
+            ui.navigate.to("/admin" if user.role == "admin" else "/cashier")
 
         pin_in.on("keydown.enter", lambda _: do_login())
         ui.button("Войти", on_click=do_login).classes("w-full")

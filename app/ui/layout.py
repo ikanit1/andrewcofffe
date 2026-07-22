@@ -32,6 +32,23 @@ def cashier_header() -> None:
             ui.button("Выход", icon="logout", on_click=_logout).props("flat color=white")
 
 
+def admin_header() -> None:
+    """Верхняя панель админа на всех /admin/* : бренд, имя, Панель, Касса, Выход."""
+    apply_theme()
+    name = app.storage.user.get("name", "Админ")
+    with ui.header().classes("items-center justify-between px-4 py-2"):
+        with ui.row().classes("items-center gap-3"):
+            ui.label("☕ Кофейня").classes("text-lg font-bold")
+            ui.label("· Админ-панель").classes("text-sm opacity-80")
+            ui.label(name).classes("text-base opacity-90")
+        with ui.row().classes("items-center gap-1"):
+            ui.button("Панель", icon="grid_view",
+                      on_click=lambda: ui.navigate.to("/admin")).props("flat color=white")
+            ui.button("Касса", icon="point_of_sale",
+                      on_click=lambda: ui.navigate.to("/cashier")).props("flat color=white")
+            ui.button("Выход", icon="logout", on_click=_logout).props("flat color=white")
+
+
 def sale_success(order_number: int, extra: str = "") -> None:
     """Крупная зелёная плашка подтверждения + короткий звук; авто-закрытие ~1.8с.
 

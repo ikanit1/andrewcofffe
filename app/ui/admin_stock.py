@@ -4,7 +4,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.db import SessionLocal
 from app.models import Ingredient, Product, RecipeItem
-from app.ui.theme import apply_theme
+from app.ui.layout import admin_header
 
 
 @ui.page("/admin/stock")
@@ -12,14 +12,13 @@ def admin_stock_page() -> None:
     from app.ui.guard import require_admin
     if not require_admin():
         return
-    apply_theme()
+    admin_header()
 
     ui.label("Склад: позиции и тех-карты").classes("text-2xl font-bold")
 
     with ui.row().classes("gap-2"):
-        ui.button("Дашборд", on_click=lambda: ui.navigate.to("/admin/dashboard"))
-        ui.button("Приход товара", on_click=lambda: ui.navigate.to("/stock/purchase"))
-        ui.button("Kaspi терминал", on_click=lambda: ui.navigate.to("/admin/kaspi"))
+        ui.button("Приход товара", icon="local_shipping",
+                  on_click=lambda: ui.navigate.to("/stock/purchase"))
 
     ing_container = ui.column().classes("w-full max-w-3xl gap-1")
 
