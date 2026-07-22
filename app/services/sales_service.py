@@ -47,6 +47,7 @@ def create_sale(
     payments: list[PaymentInput],
     order_discount_kind: str | None = None,
     order_discount_value: int = 0,
+    discount_approved: bool = False,
 ) -> Order:
     """Атомарно проводит чек: заказ + позиции + модификаторы + оплаты + списание склада.
 
@@ -89,7 +90,7 @@ def create_sale(
         )
         # проверка лимита скидки кассира (позиция) — точное сравнение без округления
         line_gross = pricing.line_unit_price_tiyn(cart_line) * cart_line.qty
-        if not pricing.discount_within_limit_tiyn(
+        if not discount_approved and not pricing.discount_within_limit_tiyn(
             line_gross, pricing.line_discount_tiyn(cart_line), limit
         ):
             raise PermissionError("Скидка превышает лимит кассира")
@@ -98,7 +99,7 @@ def create_sale(
     cart_lines = [r[3] for r in resolved]
     subtotal = pricing.order_subtotal_tiyn(cart_lines)
     order_disc = pricing.order_discount_tiyn(subtotal, order_discount_kind, order_discount_value)
-    if not pricing.discount_within_limit_tiyn(subtotal, order_disc, limit):
+    if not discount_approved and not pricing.discount_within_limit_tiyn(subtotal, order_disc, limit):
         raise PermissionError("Скидка на чек превышает лимит кассира")
     total = pricing.order_total_tiyn(subtotal, order_disc)
 
@@ -147,6 +148,13 @@ def create_sale(
                 provider=pay.provider, terminal_method=pay.terminal_method,
                 transaction_id=pay.transaction_id,
             ))
+
+        if order_disc > 0:
+            notification_service.enqueue(
+                session, kind="discount",
+                text=(f"Скидка {order_disc / 100:.2f} тг на заказ №{order.number}, "
+                      f"кассир: {cashier.name}"),
+            )
 
         session.commit()
     except Exception:

@@ -9,7 +9,7 @@ from app.models.inventory import utcnow
 
 logger = logging.getLogger(__name__)
 
-NotificationKind = Literal["shift_open", "shift_close", "collection", "refund", "low_stock"]
+NotificationKind = Literal["shift_open", "shift_close", "collection", "refund", "low_stock", "discount"]
 
 
 def enqueue(session: Session, *, kind: NotificationKind, text: str) -> NotificationOutbox:

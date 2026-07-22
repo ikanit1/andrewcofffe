@@ -9,7 +9,8 @@ from app.services import sales_service as sales
 from app.services.catalog_service import list_menu
 from app.services.pricing import PaymentInput
 from app.services import pricing
-from app.models import Modifier, Order, OrderItem, Payment
+from app.services import user_service
+from app.models import Modifier, Order, OrderItem, Payment, User
 from app.ui.guard import current_user_id, is_admin, require_user
 from app.ui.layout import cashier_header, sale_success
 from app.kaspi import service as kaspi_service
@@ -103,8 +104,12 @@ def sale_page() -> None:
             ui.button("К смене", on_click=lambda: ui.navigate.to("/cashier"))
             return
         menu = list_menu(session)
+        cashier_user = session.get(User, uid)
+        cashier_limit = cashier_user.discount_limit_percent if cashier_user else 0
 
     cart: list[dict] = []
+    order_discount = {"kind": None, "value": 0}  # kind: None|"percent"|"amount"
+    discount_approved = {"ok": False}
 
     ui.label("Экран продажи").classes("text-2xl font-bold")
     with ui.row().classes("w-full gap-4"):
@@ -174,7 +179,7 @@ def sale_page() -> None:
                                     ui.label(p.name).classes("text-lg font-bold text-center leading-tight")
                                     ui.label(f"{p.price_tiyn/100:.0f} тг").classes("text-base text-gray-600")
 
-    def cart_total_tiyn() -> int:
+    def cart_subtotal_tiyn() -> int:
         all_mod_ids = {mid for c in cart for mid in c["modifier_ids"]}
         mods_by_id = {}
         if all_mod_ids:
@@ -191,9 +196,63 @@ def sale_page() -> None:
             total += pricing.line_total_tiyn(line)
         return total
 
+    def order_discount_tiyn() -> int:
+        if not order_discount["kind"]:
+            return 0
+        try:
+            return pricing.order_discount_tiyn(
+                cart_subtotal_tiyn(), order_discount["kind"], order_discount["value"])
+        except ValueError:
+            return 0
+
+    def cart_total_tiyn() -> int:
+        return cart_subtotal_tiyn() - order_discount_tiyn()
+
     def clear_cart() -> None:
         cart.clear()
+        order_discount["kind"] = None
+        order_discount["value"] = 0
+        discount_approved["ok"] = False
         render_cart()
+
+    def _reset_after_sale() -> None:
+        cart.clear()
+        order_discount["kind"] = None
+        order_discount["value"] = 0
+        discount_approved["ok"] = False
+        render_cart()
+
+    def open_discount_dialog() -> None:
+        with ui.dialog() as dialog, ui.card().classes("gap-3"):
+            ui.label("Скидка на чек").classes("text-lg font-bold")
+            kind = ui.toggle({"none": "Нет", "percent": "%", "amount": "Сумма, тг"},
+                             value=order_discount["kind"] or "none")
+            init_val = (order_discount["value"] / 100 if order_discount["kind"] == "amount"
+                        else order_discount["value"])
+            val = ui.number("Значение", value=init_val, min=0, format="%.0f")
+
+            def apply() -> None:
+                if kind.value == "none":
+                    order_discount["kind"] = None
+                    order_discount["value"] = 0
+                elif kind.value == "percent":
+                    v = int(val.value or 0)
+                    if not 0 <= v <= 100:
+                        ui.notify("Процент 0..100", color="red")
+                        return
+                    order_discount["kind"] = "percent"
+                    order_discount["value"] = v
+                else:
+                    order_discount["kind"] = "amount"
+                    order_discount["value"] = round((val.value or 0) * 100)
+                discount_approved["ok"] = False  # новая скидка — снова требует проверки
+                dialog.close()
+                render_cart()
+
+            with ui.row().classes("gap-2"):
+                ui.button("Применить", on_click=apply)
+                ui.button("Отмена", on_click=dialog.close).props("flat")
+        dialog.open()
 
     def render_cart() -> None:
         cart_col.clear()
@@ -224,6 +283,14 @@ def sale_page() -> None:
                     ui.label(f"{c['qty']}").classes("text-xl font-bold w-8 text-center")
                     ui.button("+", on_click=inc).props("round").classes("text-xl")
             ui.separator()
+            if cart:
+                disc = order_discount_tiyn()
+                with ui.row().classes("w-full items-center justify-between"):
+                    ui.label(f"Подытог: {cart_subtotal_tiyn()/100:.0f} тг").classes("text-base")
+                    ui.button("Скидка на чек", icon="percent",
+                              on_click=open_discount_dialog).props("flat")
+                if disc:
+                    ui.label(f"Скидка: −{disc/100:.0f} тг").classes("text-orange-700")
             ui.label(f"Итого: {cart_total_tiyn()/100:.0f} тг").classes("text-2xl font-bold")
             if cart:
                 ui.button("Оплата", on_click=open_payment).classes("w-full h-16 text-xl")
@@ -284,7 +351,34 @@ def sale_page() -> None:
                     return None
                 return PaymentInput("cash", amount_tiyn, tnd)
 
+            def _open_admin_approval() -> None:
+                with ui.dialog() as adlg, ui.card().classes("gap-3"):
+                    ui.label("Скидка выше лимита кассира").classes("text-lg font-bold")
+                    ui.label("Одобрение администратора: введите PIN").classes("text-sm text-gray-500")
+                    apin = ui.input("PIN администратора", password=True).props("inputmode=numeric")
+
+                    async def approve() -> None:
+                        with SessionLocal() as s:
+                            admin = user_service.admin_by_pin(s, (apin.value or "").strip())
+                        if admin is None:
+                            ui.notify("Неверный PIN администратора", color="red")
+                            return
+                        discount_approved["ok"] = True
+                        adlg.close()
+                        await confirm_payment()
+
+                    with ui.row().classes("gap-2"):
+                        ui.button("Одобрить", on_click=approve)
+                        ui.button("Отмена", on_click=adlg.close).props("flat")
+                adlg.open()
+
             async def confirm_payment() -> None:
+                # Одобрение скидки над лимитом кассира — ДО любой оплаты (в т.ч. терминала)
+                if order_discount["kind"] and not discount_approved["ok"]:
+                    if not pricing.discount_within_limit_tiyn(
+                            cart_subtotal_tiyn(), order_discount_tiyn(), cashier_limit):
+                        _open_admin_approval()
+                        return
                 # Терминальная Kaspi-оплата: только как единственный способ (не в split)
                 if not split.value and method.value == "kaspi_terminal":
                     if total % 100 != 0:
@@ -337,19 +431,20 @@ def sale_page() -> None:
                                                            provider="terminal",
                                                            terminal_method=result.terminal_method,
                                                            transaction_id=result.transaction_id)],
+                                    order_discount_kind=order_discount["kind"],
+                                    order_discount_value=order_discount["value"],
+                                    discount_approved=discount_approved["ok"],
                                 )
                                 num = order.number
                         except Exception as e:
                             # деньги уже ушли: закрываем диалог и чистим корзину, чтобы кассир не пробил повторно
                             dialog.close()
-                            cart.clear()
-                            render_cart()
+                            _reset_after_sale()
                             ui.notify(f"Оплата прошла, но чек не сохранён ({e}). Запишите заказ вручную.",
                                       color="red")
                             return
                         dialog.close()
-                        cart.clear()
-                        render_cart()
+                        _reset_after_sale()
                         with success_host:
                             success_host.clear()
                             sale_success(num, f"Kaspi ({result.terminal_method})")
@@ -390,7 +485,12 @@ def sale_page() -> None:
                     with SessionLocal() as s:
                         lines = [sales.SaleLineInput(product_id=c["product_id"], qty=c["qty"],
                                                      modifier_ids=c["modifier_ids"]) for c in cart]
-                        order = sales.create_sale(s, cashier_id=uid, lines=lines, payments=payments)
+                        order = sales.create_sale(
+                            s, cashier_id=uid, lines=lines, payments=payments,
+                            order_discount_kind=order_discount["kind"],
+                            order_discount_value=order_discount["value"],
+                            discount_approved=discount_approved["ok"],
+                        )
                         num = order.number
                 except (ValueError, PermissionError) as e:
                     ui.notify(str(e), color="red")
@@ -399,9 +499,8 @@ def sale_page() -> None:
                     ui.notify("Не удалось провести чек. Ничего не списано, попробуйте ещё раз.", color="red")
                     return
                 dialog.close()
-                cart.clear()
-                render_cart()
                 extra = f"Сдача: {change/100:.0f} тг" if change else ""
+                _reset_after_sale()
                 with success_host:
                     success_host.clear()
                     sale_success(num, extra)

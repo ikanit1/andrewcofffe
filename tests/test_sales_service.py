@@ -116,6 +116,29 @@ def test_discount_over_limit_blocked(session):
     assert session.query(Order).count() == 0
 
 
+def test_discount_over_limit_allowed_when_approved(session):
+    cashier, latte, milk, beans, shift = _setup(session)
+    order = sales.create_sale(
+        session, cashier_id=cashier.id,
+        lines=[_line(latte.id, discount_kind="percent", discount_value=20)],
+        payments=[PaymentInput("cash", 120000, 120000)],
+        discount_approved=True,
+    )
+    assert order.total_tiyn == 120000
+
+
+def test_order_discount_enqueues_notification(session):
+    cashier, latte, milk, beans, shift = _setup(session)
+    sales.create_sale(
+        session, cashier_id=cashier.id, lines=[_line(latte.id)],
+        payments=[PaymentInput("cash", 135000, 135000)],
+        order_discount_kind="percent", order_discount_value=10,
+    )
+    notes = session.query(NotificationOutbox).filter_by(kind="discount").all()
+    assert len(notes) == 1
+    assert "150.00" in notes[0].text  # 10% от 1500 тг = 150 тг
+
+
 def test_sale_requires_open_shift(session):
     cashier, latte, milk, beans, shift = _setup(session)
     ss.close_shift(session, shift_id=shift.id, counted_cash_tiyn=0)

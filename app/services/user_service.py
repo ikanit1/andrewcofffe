@@ -72,6 +72,16 @@ def admin_telegram_ids(session: Session) -> list[int]:
     ).all())
 
 
+def admin_by_pin(session: Session, pin: str) -> User | None:
+    """Активный админ, чей PIN совпал (для одобрения скидки над лимитом кассира)."""
+    for u in session.scalars(
+        select(User).where(User.role == "admin", User.is_active)
+    ).all():
+        if u.pin_hash and verify_pin(pin, u.pin_hash):
+            return u
+    return None
+
+
 def authenticate(session: Session, *, user_id: int, pin: str) -> User | None:
     user = session.get(User, user_id)
     if user is None or not user.is_active or not user.pin_hash:

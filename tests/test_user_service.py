@@ -105,3 +105,11 @@ def test_set_active_deactivates_cashier(session):
     c = _user(session, tid=2, role="cashier")
     us.set_active(session, c.id, False)
     assert us.authenticate(session, user_id=c.id, pin="1234") is None
+
+
+def test_admin_by_pin(session):
+    a = _user(session, tid=1, role="admin", pin="7777")
+    _user(session, tid=2, role="cashier", pin="7777")  # тот же PIN, но не админ
+    got = us.admin_by_pin(session, "7777")
+    assert got is not None and got.id == a.id
+    assert us.admin_by_pin(session, "0000") is None
