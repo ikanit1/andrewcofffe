@@ -62,3 +62,10 @@ def test_user_from_init_data_valid(session):
 def test_user_from_init_data_bad_signature(session):
     _user(session, tid=777)
     assert us.user_from_init_data(session, "auth_date=1&user=%7B%22id%22%3A777%7D&hash=deadbeef", "tok") is None
+
+
+def test_admin_telegram_ids_only_active_admins(session):
+    _user(session, tid=10, role="admin", active=True)
+    _user(session, tid=11, role="admin", active=False)
+    _user(session, tid=12, role="cashier", active=True)
+    assert us.admin_telegram_ids(session) == [10]

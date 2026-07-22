@@ -13,6 +13,13 @@ def active_users(session: Session) -> list[User]:
     ).all())
 
 
+def admin_telegram_ids(session: Session) -> list[int]:
+    """Telegram ID активных админов — получатели уведомлений и бэкапов."""
+    return list(session.scalars(
+        select(User.telegram_id).where(User.role == "admin", User.is_active)
+    ).all())
+
+
 def authenticate(session: Session, *, user_id: int, pin: str) -> User | None:
     user = session.get(User, user_id)
     if user is None or not user.is_active or not user.pin_hash:
