@@ -1,4 +1,4 @@
-# Запуск POS-сервера из venv с авто-перезапуском при падении; лог в logs/server.log
+﻿# Запуск POS-сервера из venv с авто-перезапуском при падении; лог в logs/server.log
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
