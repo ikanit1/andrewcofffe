@@ -99,6 +99,50 @@ class ShiftsReport:
     by_cashier: list[CashierRow] = field(default_factory=list)
 
 
+@dataclass
+class XReport:
+    shift_id: int
+    opened_at: datetime
+    cashier_name: str
+    orders_count: int
+    revenue_tiyn: int
+    by_method: dict[str, int]
+    refunds_tiyn: int
+    expected_cash_tiyn: int
+
+
+def x_report(session: Session) -> XReport | None:
+    """Сводка по текущей открытой смене без её закрытия. None — смена не открыта."""
+    from app.services.shift_service import current_open_shift, expected_cash_tiyn
+
+    shift = current_open_shift(session)
+    if shift is None:
+        return None
+    orders = session.scalars(select(Order).where(Order.shift_id == shift.id)).all()
+    order_ids = [o.id for o in orders]
+    revenue = sum(o.total_tiyn for o in orders)
+    by_method: dict[str, int] = {}
+    refunds = 0
+    if order_ids:
+        rows = session.execute(
+            select(Payment.method, func.sum(Payment.amount_tiyn))
+            .where(Payment.order_id.in_(order_ids))
+            .group_by(Payment.method)
+        ).all()
+        by_method = {m: int(t or 0) for m, t in rows}
+        refunds = int(session.scalar(
+            select(func.coalesce(func.sum(Refund.amount_tiyn), 0))
+            .where(Refund.order_id.in_(order_ids))
+        ) or 0)
+    cashier = session.get(User, shift.cashier_id)
+    return XReport(
+        shift_id=shift.id, opened_at=shift.opened_at,
+        cashier_name=cashier.name if cashier is not None else "?",
+        orders_count=len(orders), revenue_tiyn=revenue, by_method=by_method,
+        refunds_tiyn=refunds, expected_cash_tiyn=expected_cash_tiyn(session, shift.id),
+    )
+
+
 def _refunds_tiyn(session: Session, period: Period) -> int:
     return int(session.scalar(
         select(func.coalesce(func.sum(Refund.amount_tiyn), 0))

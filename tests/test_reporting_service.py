@@ -119,6 +119,18 @@ def test_cost_and_margin(tmp_path):
     assert m.net_revenue_tiyn == 3000
 
 
+def test_x_report_current_shift(tmp_path):
+    Sm, now = _seed(tmp_path)
+    with Sm() as s:
+        rep = rs.x_report(s)
+    assert rep is not None
+    assert rep.orders_count == 2
+    assert rep.revenue_tiyn == 4500
+    assert rep.by_method == {"cash": 3000, "card": 1500}
+    assert rep.refunds_tiyn == 1500
+    assert rep.cashier_name == "Айгуль"
+
+
 def test_shifts_and_cashiers(tmp_path):
     Sm, now = _seed(tmp_path)
     p = rs.period_from_preset("today", now)

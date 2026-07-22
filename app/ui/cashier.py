@@ -6,6 +6,9 @@ from app.db import SessionLocal
 from app.services import shift_service as ss
 from app.services import modifier_service as ms
 from app.services import sales_service as sales
+from app.services import reporting_service
+from app.services import dashboard_service
+from app.timezone import to_almaty
 from app.services.catalog_service import list_menu
 from app.services.pricing import PaymentInput
 from app.services import pricing
@@ -15,6 +18,9 @@ from app.ui.guard import current_user_id, is_admin, require_user
 from app.ui.layout import cashier_header, sale_success
 from app.kaspi import service as kaspi_service
 from app.kaspi.client import KaspiError
+
+_METHOD_LABELS = {"cash": "Наличные", "card": "Карта",
+                  "kaspi_qr": "Kaspi QR", "kaspi_terminal": "Kaspi (терминал)"}
 
 
 @ui.page("/cashier")
@@ -52,6 +58,38 @@ def cashier_page() -> None:
     ui.button("Экран продажи", on_click=lambda: ui.navigate.to("/cashier/sale"))
     ui.button("Возвраты", on_click=lambda: ui.navigate.to("/cashier/refunds"))
     ui.button("Приход товара", on_click=lambda: ui.navigate.to("/stock/purchase"))
+
+    def show_xreport() -> None:
+        with SessionLocal() as s:
+            rep = reporting_service.x_report(s)
+        with ui.dialog() as dlg, ui.card().classes("gap-2 min-w-72"):
+            ui.label("X-отчёт (текущая смена)").classes("text-xl font-bold")
+            if rep is None:
+                ui.label("Смена не открыта")
+            else:
+                ui.label(f"Смена №{rep.shift_id} · {rep.cashier_name}")
+                ui.label(f"Открыта: {to_almaty(rep.opened_at):%d.%m %H:%M}")
+                ui.label(f"Чеков: {rep.orders_count}")
+                ui.label(f"Выручка: {rep.revenue_tiyn/100:.0f} тг").classes("font-bold")
+                for m, amt in rep.by_method.items():
+                    ui.label(f"  {_METHOD_LABELS.get(m, m)}: {amt/100:.0f} тг")
+                if rep.refunds_tiyn:
+                    ui.label(f"Возвраты: −{rep.refunds_tiyn/100:.0f} тг").classes("text-orange-700")
+                ui.label(f"Ожидается в кассе: {rep.expected_cash_tiyn/100:.0f} тг").classes("font-bold")
+            ui.button("Закрыть", on_click=dlg.close)
+        dlg.open()
+
+    ui.button("X-отчёт (текущая смена)", icon="assessment",
+              on_click=show_xreport).props("outline")
+
+    with SessionLocal() as s:
+        low = dashboard_service.low_stock_ingredients(s)
+    if low:
+        with ui.expansion(f"⚠ На исходе ({len(low)})").classes("w-full max-w-md"):
+            for ing in low:
+                ui.label(
+                    f"{ing.name}: {ing.stock_qty} {ing.unit} (порог {ing.low_stock_threshold})"
+                ).classes("text-red-600")
 
     with ui.expansion("Инкассация").classes("w-full max-w-md"):
         amt = ui.number("Сумма изъятия, тг", value=0, min=0, format="%.0f")
