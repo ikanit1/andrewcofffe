@@ -14,6 +14,22 @@ def admin_dashboard_page() -> None:
         return
 
     ui.label("Дашборд").classes("text-2xl font-bold")
+
+    async def do_backup() -> None:
+        from app.services.backup_service import run_backup_once
+        ui.notify("Делаю бэкап…")
+        result = await run_backup_once()
+        if result.error:
+            ui.notify(f"Бэкап {result.path.name} сделан, но: {result.error}", color="orange")
+        else:
+            ui.notify(
+                f"Бэкап готов: {result.path.name} "
+                f"({result.size_bytes / 1024 / 1024:.1f} МБ), "
+                f"в Telegram доставлено: {result.delivered_count}",
+                color="green",
+            )
+
+    ui.button("Сделать бэкап сейчас", icon="backup", on_click=do_backup)
     box = ui.column().classes("w-full max-w-3xl gap-3")
 
     def refresh() -> None:
