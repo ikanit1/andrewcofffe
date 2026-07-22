@@ -11,6 +11,18 @@ def test_create_and_list_menu(session):
     assert menu == [(cat, [p])]
 
 
+def test_product_image_roundtrip(session):
+    cat = cs.create_category(session, "Кофе")
+    p = cs.create_product(session, name="Латте", category_id=cat.id, kind="prepared", price_tiyn=150000)
+    assert p.has_image is False
+    cs.set_product_image(session, p.id, b"\x89PNG-bytes", "image/png")
+    assert cs.get_product_image(session, p.id) == (b"\x89PNG-bytes", "image/png")
+    assert session.get(Product, p.id).has_image is True
+    cs.clear_product_image(session, p.id)
+    assert cs.get_product_image(session, p.id) is None
+    assert session.get(Product, p.id).has_image is False
+
+
 def test_update_price(session):
     cat = cs.create_category(session, "Снеки")
     p = cs.create_product(session, name="Круассан", category_id=cat.id, kind="retail", price_tiyn=90000)

@@ -59,6 +59,11 @@ def ensure_schema(engine: Engine) -> None:
         "kaspi_settings": {
             "protection_enabled": "BOOLEAN NOT NULL DEFAULT 1",
         },
+        "products": {
+            "image": "BLOB",
+            "image_mime": "VARCHAR",
+            "has_image": "BOOLEAN NOT NULL DEFAULT 0",
+        },
     }
     with engine.begin() as conn:
         for table, columns in wanted.items():

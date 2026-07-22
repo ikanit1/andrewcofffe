@@ -41,6 +41,19 @@ def create_app(start_bot: bool = True) -> FastAPI:
     def health():
         return {"status": "ok"}
 
+    @app.get("/product-image/{product_id}")
+    def product_image(product_id: int):
+        from fastapi import Response
+
+        from app.db import SessionLocal
+        from app.services.catalog_service import get_product_image
+        with SessionLocal() as session:
+            img = get_product_image(session, product_id)
+        if img is None:
+            return Response(status_code=404)
+        data, mime = img
+        return Response(content=data, media_type=mime)
+
     from app.ui import register_pages
 
     register_pages()

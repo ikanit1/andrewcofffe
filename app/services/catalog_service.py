@@ -69,6 +69,33 @@ def update_product(session: Session, product_id: int, **fields) -> Product:
     return p
 
 
+def set_product_image(session: Session, product_id: int, data: bytes, mime: str) -> None:
+    p = session.get(Product, product_id)
+    if p is None:
+        raise ValueError(f"Товар {product_id} не найден")
+    p.image = data
+    p.image_mime = mime or "image/jpeg"
+    p.has_image = True
+    session.commit()
+
+
+def clear_product_image(session: Session, product_id: int) -> None:
+    p = session.get(Product, product_id)
+    if p is None:
+        raise ValueError(f"Товар {product_id} не найден")
+    p.image = None
+    p.image_mime = None
+    p.has_image = False
+    session.commit()
+
+
+def get_product_image(session: Session, product_id: int) -> tuple[bytes, str] | None:
+    p = session.get(Product, product_id)
+    if p is None or not p.has_image or p.image is None:
+        return None
+    return p.image, p.image_mime or "image/jpeg"
+
+
 def list_menu(session: Session) -> list[tuple[Category, list[Product]]]:
     """Активные категории с активными товарами, в порядке sort_order."""
     cats = session.scalars(

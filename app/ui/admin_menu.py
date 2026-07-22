@@ -19,6 +19,13 @@ def admin_menu_page() -> None:
 
     container = ui.column().classes("w-full max-w-3xl gap-2")
 
+    def _upload_image(pid, e) -> None:
+        data = e.content.read()
+        with SessionLocal() as s:
+            cs.set_product_image(s, pid, data, e.type or "image/jpeg")
+        ui.notify("Фото загружено", color="green")
+        refresh()
+
     def refresh() -> None:
         container.clear()
         with container, SessionLocal() as session:
@@ -67,6 +74,12 @@ def admin_menu_page() -> None:
                             dialog.open()
 
                         ui.button("Убрать", on_click=deactivate, color="red")
+
+                        if p.has_image:
+                            ui.image(f"/product-image/{p.id}").classes("w-12 h-12 object-cover rounded")
+                        ui.upload(auto_upload=True, max_files=1,
+                                  on_upload=lambda e, pid=p.id: _upload_image(pid, e)) \
+                            .props('accept=image/* flat dense').classes("max-w-40")
 
     def reload_cat_options() -> None:
         with SessionLocal() as session:

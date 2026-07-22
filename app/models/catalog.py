@@ -1,4 +1,4 @@
-from sqlalchemy import ForeignKey, UniqueConstraint
+from sqlalchemy import ForeignKey, LargeBinary, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -25,6 +25,11 @@ class Product(Base):
     ingredient_id: Mapped[int | None] = mapped_column(ForeignKey("ingredients.id"), default=None)
     sort_order: Mapped[int] = mapped_column(default=0)
     is_active: Mapped[bool] = mapped_column(default=True)
+    # Фото товара хранится в БД (попадает в бэкап). Блоб отложенный — не грузится
+    # в обычных выборках меню; has_image — дешёвый флаг для показа плитки.
+    image: Mapped[bytes | None] = mapped_column(LargeBinary, default=None, deferred=True)
+    image_mime: Mapped[str | None] = mapped_column(default=None)
+    has_image: Mapped[bool] = mapped_column(default=False)
 
 
 class ModifierGroup(Base):

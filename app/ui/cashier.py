@@ -214,6 +214,9 @@ def sale_page() -> None:
                                 )
                                 card.on("click", lambda p=p: add_to_cart(p))
                                 with card:
+                                    if getattr(p, "has_image", False):
+                                        ui.image(f"/product-image/{p.id}").classes(
+                                            "w-14 h-14 object-cover rounded mb-1")
                                     ui.label(p.name).classes("text-lg font-bold text-center leading-tight")
                                     ui.label(f"{p.price_tiyn/100:.0f} тг").classes("text-base text-gray-600")
 
