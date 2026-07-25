@@ -3,6 +3,7 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.responses import RedirectResponse
 from nicegui import ui
 
 from app.config import settings
@@ -40,6 +41,10 @@ def create_app(start_bot: bool = True) -> FastAPI:
     @app.get("/health")
     def health():
         return {"status": "ok"}
+
+    @app.get("/")
+    def root():
+        return RedirectResponse("/login")
 
     @app.get("/product-image/{product_id}")
     def product_image(product_id: int):
