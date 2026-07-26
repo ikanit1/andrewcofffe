@@ -61,6 +61,16 @@ def test_low_stock_triggers_notification_once(session):
     assert session.query(NotificationOutbox).filter_by(kind="low_stock").count() == 1  # без дублей
 
 
+def test_zero_threshold_stays_silent_when_stock_goes_negative(session):
+    """Порог 0 = отслеживание выключено, даже если остаток ушёл в минус."""
+    sugar = Ingredient(name="Сахар", unit="г", stock_qty=10, low_stock_threshold=0)
+    session.add(sugar)
+    session.commit()
+    inv.apply_move(session, sugar.id, qty_delta=-30, kind="sale", commit=True)
+    assert session.get(Ingredient, sugar.id).stock_qty == -20
+    assert session.query(NotificationOutbox).filter_by(kind="low_stock").count() == 0
+
+
 def test_low_stock_notifies_again_after_restock_and_fall(session):
     milk = Ingredient(name="Молоко", unit="мл", low_stock_threshold=1000)
     session.add(milk)

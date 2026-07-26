@@ -46,6 +46,8 @@ def apply_move(
 def _check_low_stock(session: Session, ing: Ingredient) -> None:
     """Уведомляет один раз при пересечении порога вниз; повтор — только после
     пересечения порога вверх (пополнение) и нового падения."""
+    if ing.low_stock_threshold <= 0:
+        return  # отслеживание выключено — молчим даже при уходе остатка в минус
     if ing.stock_qty < ing.low_stock_threshold:
         if not ing.low_stock_notified:
             notification_service.enqueue(
