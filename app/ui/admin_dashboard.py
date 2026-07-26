@@ -5,6 +5,7 @@ from app.models import User
 from app.services import dashboard_service as ds
 from app.services import shift_service as ss
 from app.timezone import to_almaty
+from app.ui.design import stat_tile
 from app.ui.guard import require_admin
 from app.ui.layout import admin_header
 
@@ -15,7 +16,7 @@ def admin_dashboard_page() -> None:
         return
     admin_header()
 
-    ui.label("Дашборд").classes("text-2xl font-bold")
+    ui.label("Дашборд").classes("text-2xl font-black")
 
     async def do_backup() -> None:
         from app.services.backup_service import run_backup_once
@@ -41,26 +42,33 @@ def admin_dashboard_page() -> None:
             shift = ss.current_open_shift(session)
             low_stock = ds.low_stock_ingredients(session)
 
-            with ui.row().classes("gap-6"):
-                ui.label(f"Выручка сегодня: {summary.revenue_tiyn / 100:.2f} тг").classes("text-lg")
-                ui.label(f"Чеков: {summary.orders_count}").classes("text-lg")
-                ui.label(f"Позиций продано: {summary.items_count}").classes("text-lg")
+            with ui.row().classes("w-full gap-3 no-wrap"):
+                stat_tile("Выручка сегодня", f"{summary.revenue_tiyn / 100:.0f} тг")
+                stat_tile("Чеков", str(summary.orders_count))
+                stat_tile("Позиций продано", str(summary.items_count))
 
             if shift is None:
-                ui.label("Смена закрыта").classes("text-gray-500")
+                with ui.row().classes("items-center gap-2"):
+                    ui.icon("lock", size="20px").style("color: var(--text-muted)")
+                    ui.label("Смена закрыта").style("color: var(--text-secondary)")
             else:
                 cashier = session.get(User, shift.cashier_id)
                 cashier_name = cashier.name if cashier is not None else "неизвестен"
-                ui.label(
-                    f"Смена открыта: {cashier_name}, с {to_almaty(shift.opened_at):%d.%m.%Y %H:%M}"
-                ).classes("text-green-700")
+                with ui.row().classes("items-center gap-2"):
+                    ui.icon("check_circle", size="20px").style("color: var(--status-success)")
+                    ui.label(
+                        f"Смена открыта: {cashier_name}, "
+                        f"с {to_almaty(shift.opened_at):%d.%m.%Y %H:%M}"
+                    ).style("color: var(--status-success)")
 
-            ui.label("На исходе").classes("text-xl mt-4")
-            if not low_stock:
-                ui.label("Все позиции в норме").classes("text-gray-500")
-            for ing in low_stock:
-                ui.label(
-                    f"{ing.name}: {ing.stock_qty} {ing.unit} (порог {ing.low_stock_threshold})"
-                ).classes("text-red-600")
+            with ui.card().classes("w-full p-4 gap-2"):
+                ui.label("На исходе").classes("text-lg font-bold")
+                if not low_stock:
+                    ui.label("Все позиции в норме").style("color: var(--text-secondary)")
+                for ing in low_stock:
+                    ui.label(
+                        f"{ing.name}: {ing.stock_qty} {ing.unit} "
+                        f"(порог {ing.low_stock_threshold})"
+                    ).style("color: var(--status-danger)")
 
     ui.timer(3.0, refresh)

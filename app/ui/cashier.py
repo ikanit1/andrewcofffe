@@ -15,6 +15,9 @@ from app.services import pricing
 from app.services import user_service
 from app.services.login_throttle import LockedOut
 from app.models import Modifier, Order, OrderItem, Payment, User
+from app.ui.design import (BANKNOTES, PAYMENT_ICONS, category_icon, numpad,
+                           reason_picker,
+                           section_title, stat_tile)
 from app.ui.guard import current_user_id, is_admin, require_user
 from app.ui.layout import cashier_header, sale_success
 from app.kaspi import service as kaspi_service
@@ -40,25 +43,53 @@ def cashier_page() -> None:
     ui.label("Касса").classes("text-2xl font-bold")
 
     if shift is None:
-        ui.label("Смена не открыта").classes("text-lg")
-        cash = ui.number("Стартовая наличность, тг", value=0, min=0, format="%.0f")
+        with ui.card().classes("w-full max-w-xl p-6 gap-4"):
+            with ui.row().classes("items-center gap-2"):
+                ui.icon("lock", size="22px").style("color: var(--status-danger)")
+                ui.label("Смена закрыта").classes("text-lg font-bold") \
+                    .style("color: var(--status-danger)")
+            ui.label("Пересчитайте наличность в кассе и откройте смену — "
+                     "после этого станет доступна продажа.") \
+                .classes("text-sm").style("color: var(--text-secondary)")
+            cash = ui.number("Стартовая наличность, тг", value=0, min=0,
+                             format="%.0f").props("readonly").classes("w-full")
+            numpad(cash, quick=BANKNOTES)
 
-        def do_open() -> None:
-            try:
-                with SessionLocal() as s:
-                    ss.open_shift(s, cashier_id=uid, opening_cash_tiyn=round((cash.value or 0) * 100))
-            except ValueError as e:
-                ui.notify(str(e), color="red")
-                return
-            ui.navigate.to("/cashier")
+            def do_open() -> None:
+                try:
+                    with SessionLocal() as s:
+                        ss.open_shift(s, cashier_id=uid,
+                                      opening_cash_tiyn=round((cash.value or 0) * 100))
+                except ValueError as e:
+                    ui.notify(str(e), color="red")
+                    return
+                ui.navigate.to("/cashier")
 
-        ui.button("Открыть смену", on_click=do_open)
+            ui.button("Открыть смену", icon="lock_open", on_click=do_open) \
+                .classes("w-full h-16 text-xl")
         return
 
-    ui.label(f"Смена открыта (№{shift.id})").classes("text-lg text-green-700")
-    ui.button("Экран продажи", on_click=lambda: ui.navigate.to("/cashier/sale"))
-    ui.button("Возвраты", on_click=lambda: ui.navigate.to("/cashier/refunds"))
-    ui.button("Приход товара", on_click=lambda: ui.navigate.to("/stock/purchase"))
+    with SessionLocal() as s:
+        today = dashboard_service.today_summary(s)
+        expected_now = ss.expected_cash_tiyn(s, shift.id)
+
+    with ui.card().classes("w-full max-w-3xl p-5 gap-4"):
+        with ui.row().classes("items-center gap-2"):
+            ui.icon("check_circle", size="22px").style("color: var(--status-success)")
+            ui.label(f"Смена №{shift.id} открыта с {to_almaty(shift.opened_at):%H:%M}") \
+                .classes("text-lg font-bold").style("color: var(--status-success)")
+        with ui.row().classes("w-full gap-3 no-wrap"):
+            stat_tile("Выручка сегодня", f"{today.revenue_tiyn / 100:.0f} тг")
+            stat_tile("Чеков", str(today.orders_count))
+            stat_tile("Ожидается в кассе", f"{expected_now / 100:.0f} тг")
+
+    with ui.row().classes("w-full max-w-3xl gap-4 no-wrap"):
+        ui.button("Продажа", icon="point_of_sale",
+                  on_click=lambda: ui.navigate.to("/cashier/sale")) \
+            .classes("flex-1 h-24 text-xl")
+        ui.button("Возвраты", icon="undo",
+                  on_click=lambda: ui.navigate.to("/cashier/refunds")) \
+            .props("outline").classes("flex-1 h-24 text-xl")
 
     def show_xreport() -> None:
         with SessionLocal() as s:
@@ -80,40 +111,69 @@ def cashier_page() -> None:
             ui.button("Закрыть", on_click=dlg.close)
         dlg.open()
 
-    ui.button("X-отчёт (текущая смена)", icon="assessment",
-              on_click=show_xreport).props("outline")
+    def open_collection_dialog() -> None:
+        with ui.dialog() as dlg, ui.card().classes("gap-3 min-w-80"):
+            ui.label("Инкассация").classes("text-xl font-bold")
+            amt = ui.number("Сумма изъятия, тг", value=0, min=0,
+                            format="%.0f").props("readonly").classes("w-full")
+            numpad(amt, quick=BANKNOTES)
+            note = ui.input("Примечание").classes("w-full")
+
+            def do_collect() -> None:
+                try:
+                    with SessionLocal() as s:
+                        ss.add_collection(s, shift_id=shift.id,
+                                          amount_tiyn=round((amt.value or 0) * 100),
+                                          note=note.value or None)
+                except ValueError as e:
+                    ui.notify(str(e), color="red")
+                    return
+                dlg.close()
+                ui.notify("Инкассация записана")
+                ui.navigate.to("/cashier")
+
+            with ui.row().classes("gap-2"):
+                ui.button("Изъять", on_click=do_collect)
+                ui.button("Отмена", on_click=dlg.close).props("flat")
+        dlg.open()
+
+    with ui.column().classes("w-full max-w-3xl gap-2"):
+        section_title("Во время смены")
+        with ui.row().classes("gap-2 flex-wrap"):
+            ui.button("X-отчёт", icon="assessment", on_click=show_xreport) \
+                .props("outline").classes("h-12")
+            ui.button("Приход товара", icon="local_shipping",
+                      on_click=lambda: ui.navigate.to("/stock/purchase")) \
+                .props("outline").classes("h-12")
+            ui.button("Инкассация", icon="savings", on_click=open_collection_dialog) \
+                .props("outline").classes("h-12")
 
     with SessionLocal() as s:
         low = dashboard_service.low_stock_ingredients(s)
     if low:
-        with ui.expansion(f"⚠ На исходе ({len(low)})").classes("w-full max-w-md"):
+        with ui.card().classes("w-full max-w-3xl p-4 gap-2") \
+                .style("background: var(--status-warning-bg); "
+                       "border-color: var(--status-warning)"):
+            with ui.row().classes("items-center gap-2"):
+                ui.icon("warning", size="20px").style("color: var(--status-warning)")
+                ui.label(f"На исходе ({len(low)})").classes("font-bold") \
+                    .style("color: var(--status-warning)")
             for ing in low:
                 ui.label(
                     f"{ing.name}: {ing.stock_qty} {ing.unit} (порог {ing.low_stock_threshold})"
-                ).classes("text-red-600")
+                ).classes("text-sm").style("color: var(--text-secondary)")
 
-    with ui.expansion("Инкассация").classes("w-full max-w-md"):
-        amt = ui.number("Сумма изъятия, тг", value=0, min=0, format="%.0f")
-        note = ui.input("Примечание")
-
-        def do_collect() -> None:
-            try:
-                with SessionLocal() as s:
-                    ss.add_collection(s, shift_id=shift.id,
-                                      amount_tiyn=round((amt.value or 0) * 100), note=note.value or None)
-            except ValueError as e:
-                ui.notify(str(e), color="red")
-                return
-            ui.notify("Инкассация записана")
-            ui.navigate.to("/cashier")
-
-        ui.button("Изъять", on_click=do_collect)
-
-    with ui.expansion("Закрыть смену").classes("w-full max-w-md"):
-        with SessionLocal() as s:
-            expected = ss.expected_cash_tiyn(s, shift.id)
-        ui.label(f"Ожидается в кассе: {expected / 100:.2f} тг")
-        counted = ui.number("Фактически в кассе, тг", value=expected / 100, min=0, format="%.0f")
+    with ui.card().classes("w-full max-w-3xl p-4 gap-3") \
+            .style("background: var(--status-danger-bg); border-color: var(--status-danger-border)"):
+        with ui.row().classes("items-center gap-2"):
+            ui.icon("lock", size="20px").style("color: var(--status-danger)")
+            ui.label("Закрыть смену").classes("text-lg font-bold")
+        expected = expected_now
+        ui.label(f"Ожидается в кассе {expected / 100:.0f} тг — сверьте с фактом") \
+            .classes("text-sm").style("color: var(--text-secondary)")
+        counted = ui.number("Фактически в кассе, тг", value=expected / 100, min=0,
+                            format="%.0f").props("readonly").classes("w-full max-w-xs")
+        numpad(counted, quick=BANKNOTES, exact=int(expected / 100))
 
         def do_close() -> None:
             try:
@@ -127,7 +187,8 @@ def cashier_page() -> None:
             ui.notify(f"Смена закрыта. Расхождение: {diff:+.2f} тг")
             ui.navigate.to("/cashier")
 
-        ui.button("Закрыть смену", on_click=do_close, color="red")
+        ui.button("Закрыть смену", icon="lock", on_click=do_close, color="negative") \
+            .classes("h-12")
 
 
 @ui.page("/cashier/sale")
@@ -149,14 +210,42 @@ def sale_page() -> None:
     cart: list[dict] = []
     order_discount = {"kind": None, "value": 0}  # kind: None|"percent"|"amount"
     discount_approved = {"ok": False}
+    # Раскладка экрана продажи из макета: сетка / рельс категорий слева / телефон.
+    view = {"layout": "grid", "cat_id": menu[0][0].id if menu else None}
 
-    ui.label("Экран продажи").classes("text-2xl font-bold")
-    with ui.row().classes("w-full gap-4"):
-        products_col = ui.column().classes("flex-1")
-        cart_col = ui.column().classes("w-96")
+    with ui.row().classes("w-full items-center justify-between gap-3 flex-wrap"):
+        with ui.row().classes("items-baseline gap-3"):
+            ui.label("Продажа").classes("text-2xl font-black")
+            cart_count_label = ui.label("Чек пуст").classes("text-sm") \
+                .style("color: var(--text-secondary)")
+        layout_row = ui.row().classes("items-center gap-1 rounded-full p-1") \
+            .style("background: var(--surface-card); border: 1px solid var(--border-subtle)")
+
+    sale_row = ui.row().classes("w-full gap-4 items-start no-wrap")
+    with sale_row:
+        products_col = ui.column().classes("flex-1 min-w-0 gap-3")
+        cart_col = ui.column().classes("w-96 shrink-0")
     # Стабильный контейнер для плашки успеха: cart_col пересоздаётся в render_cart(),
     # поэтому диалог успеха нельзя создавать в его (удаляемом) контексте — держим здесь.
     success_host = ui.column()
+
+    def qty_in_cart(product_id: int) -> int:
+        return sum(c["qty"] for c in cart if c["product_id"] == product_id)
+
+    def render_layout_switch() -> None:
+        layout_row.clear()
+        with layout_row:
+            for lid, label in (("grid", "Сетка"), ("rail", "Рельс"), ("phone", "Телефон")):
+                state = "cp-pill-active" if view["layout"] == lid else "cp-pill-flat"
+                ui.button(label, on_click=lambda l=lid: set_layout(l)) \
+                    .props("flat dense no-caps") \
+                    .classes(f"rounded-full px-4 h-9 text-sm font-bold {state}")
+
+    def set_layout(layout_id: str) -> None:
+        view["layout"] = layout_id
+        render_layout_switch()
+        render_products()
+        render_cart()
 
     def add_to_cart(product) -> None:
         with SessionLocal() as session:
@@ -197,29 +286,99 @@ def sale_page() -> None:
             ui.button("Отмена", on_click=dialog.close)
         dialog.open()
 
-    with products_col:
+    def _category_pill(cat, *, vertical: bool) -> None:
+        state = "cp-pill-active" if view["cat_id"] == cat.id else "cp-pill-idle"
+        shape = ("flex-col items-center justify-center gap-1 w-full h-24 rounded-2xl"
+                 if vertical else "items-center gap-2 h-14 px-5 rounded-full")
+        btn = ui.button(on_click=lambda c=cat: set_category(c.id)) \
+            .props("flat no-caps").classes(f"flex {shape} font-bold cp-hover {state}")
+        with btn:
+            ui.icon(category_icon(cat.name), size="26px" if vertical else "22px")
+            ui.label(cat.name).classes("text-sm" if vertical else "text-base")
+
+    def _product_card(p, *, big: bool, cat_name: str) -> None:
+        """Плитка товара: название, цена и счётчик в углу, если товар уже в чеке."""
+        qty = qty_in_cart(p.id)
+        card = ui.card().classes("w-full cursor-pointer p-4 gap-1 justify-end cp-hover relative") \
+            .style(f"min-height: {186 if big else 150}px")
+        card.on("click", lambda p=p: add_to_cart(p))
+        with card:
+            if getattr(p, "has_image", False):
+                ui.image(f"/product-image/{p.id}").classes("w-14 h-14 object-cover rounded")
+            elif big:
+                # Категорию берём из цикла: объекты меню отсоединены от сессии,
+                # и обращение к p.category подняло бы ленивую загрузку на закрытой сессии.
+                ui.icon(category_icon(cat_name), size="30px") \
+                    .style("color: var(--brand-primary); opacity:.55")
+            ui.label(p.name).classes(
+                f"{'text-2xl' if big else 'text-xl'} font-bold leading-tight")
+            ui.label(f"{p.price_tiyn / 100:.0f} тг") \
+                .classes("text-lg").style("color: var(--text-secondary)")
+            if qty:
+                ui.label(str(qty)).classes(
+                    "absolute rounded-full flex items-center justify-center "
+                    "text-lg font-black"
+                ).style("top:12px;right:12px;min-width:32px;height:32px;padding:0 8px;"
+                        "background: var(--brand-primary); color: var(--text-on-brand)")
+
+    def _product_row(p) -> None:
+        """Строка товара для раскладки «Телефон»: крупная зона нажатия."""
+        qty = qty_in_cart(p.id)
+        card = ui.card().classes("w-full cursor-pointer p-4 cp-hover")
+        card.on("click", lambda p=p: add_to_cart(p))
+        with card, ui.row().classes("items-center gap-3 w-full no-wrap"):
+            with ui.column().classes("gap-0 flex-1 min-w-0"):
+                ui.label(p.name).classes("text-xl font-bold leading-tight")
+                ui.label(f"{p.price_tiyn / 100:.0f} тг").classes("text-lg") \
+                    .style("color: var(--text-secondary)")
+            if qty:
+                ui.label(str(qty)).classes(
+                    "rounded-full flex items-center justify-center text-lg font-black"
+                ).style("min-width:32px;height:32px;padding:0 8px;flex:none;"
+                        "background: var(--brand-primary); color: var(--text-on-brand)")
+            ui.icon("add", size="28px").classes("rounded-full flex items-center justify-center") \
+                .style("width:52px;height:52px;flex:none;color: var(--brand-primary);"
+                       "background: var(--surface-sunken)")
+
+    def set_category(cat_id: int) -> None:
+        view["cat_id"] = cat_id
+        render_products()
+
+    def render_products() -> None:
+        products_col.clear()
         if not menu:
-            ui.label("Меню пустое").classes("text-gray-500")
-        else:
-            with ui.tabs().classes("w-full") as cat_tabs:
+            with products_col:
+                ui.label("Меню пустое").style("color: var(--text-secondary)")
+            return
+        cat_sel = next((c for c, _ in menu if c.id == view["cat_id"]), menu[0][0])
+        products = next((ps for c, ps in menu if c.id == cat_sel.id), menu[0][1])
+        cat_name = cat_sel.name
+        layout = view["layout"]
+        with products_col:
+            if layout == "rail":
+                # Категории узкой колонкой слева, товары — крупной сеткой справа
+                with ui.row().classes("w-full gap-4 items-start no-wrap"):
+                    with ui.column().classes("w-32 shrink-0 gap-2"):
+                        for cat, _ in menu:
+                            _category_pill(cat, vertical=True)
+                    with ui.grid().classes("flex-1 min-w-0 gap-4") \
+                            .style("grid-template-columns: repeat(auto-fill, minmax(210px, 1fr))"):
+                        for p in products:
+                            _product_card(p, big=True, cat_name=cat_name)
+                return
+
+            with ui.row().classes("w-full gap-2 flex-wrap"):
                 for cat, _ in menu:
-                    ui.tab(name=str(cat.id), label=cat.name)
-            with ui.tab_panels(cat_tabs, value=str(menu[0][0].id)).classes("w-full"):
-                for cat, products in menu:
-                    with ui.tab_panel(str(cat.id)):
-                        with ui.grid(columns=3).classes("w-full gap-3"):
-                            for p in products:
-                                card = ui.card().classes(
-                                    "w-full h-28 items-center justify-center cursor-pointer "
-                                    "p-2 hover:bg-[#f5ece0] transition"
-                                )
-                                card.on("click", lambda p=p: add_to_cart(p))
-                                with card:
-                                    if getattr(p, "has_image", False):
-                                        ui.image(f"/product-image/{p.id}").classes(
-                                            "w-14 h-14 object-cover rounded mb-1")
-                                    ui.label(p.name).classes("text-lg font-bold text-center leading-tight")
-                                    ui.label(f"{p.price_tiyn/100:.0f} тг").classes("text-base text-gray-600")
+                    _category_pill(cat, vertical=False)
+            if layout == "phone":
+                with ui.column().classes("w-full gap-2 max-w-lg"):
+                    for p in products:
+                        _product_row(p)
+            else:
+                with ui.grid().classes("w-full gap-3") \
+                        .style("grid-template-columns: repeat(auto-fill, minmax(180px, 1fr))"):
+                    for p in products:
+                        _product_card(p, big=False, cat_name=cat_name)
 
     def cart_subtotal_tiyn() -> int:
         all_mod_ids = {mid for c in cart for mid in c["modifier_ids"]}
@@ -237,6 +396,18 @@ def sale_page() -> None:
             )
             total += pricing.line_total_tiyn(line)
         return total
+
+    def line_sum_tiyn(c: dict) -> int:
+        """Сумма одной строки чека с модификаторами — для подписи под названием."""
+        deltas = []
+        if c["modifier_ids"]:
+            with SessionLocal() as s:
+                deltas = [m.price_delta_tiyn for m in
+                          s.query(Modifier).filter(Modifier.id.in_(c["modifier_ids"])).all()]
+        return pricing.line_total_tiyn(pricing.CartLine(
+            base_price_tiyn=c["base_price_tiyn"], qty=c["qty"],
+            unit_cost_tiyn=0, modifier_price_deltas=deltas,
+        ))
 
     def order_discount_tiyn() -> int:
         if not order_discount["kind"]:
@@ -271,7 +442,9 @@ def sale_page() -> None:
                              value=order_discount["kind"] or "none")
             init_val = (order_discount["value"] / 100 if order_discount["kind"] == "amount"
                         else order_discount["value"])
-            val = ui.number("Значение", value=init_val, min=0, format="%.0f")
+            val = ui.number("Значение", value=init_val, min=0,
+                            format="%.0f").props("readonly").classes("w-full")
+            numpad(val)
 
             def apply() -> None:
                 if kind.value == "none":
@@ -297,19 +470,35 @@ def sale_page() -> None:
         dialog.open()
 
     def render_cart() -> None:
+        count = sum(c["qty"] for c in cart)
+        cart_count_label.set_text(f"{count} поз. в чеке" if count else "Чек пуст")
+        # Счётчики на плитках товаров живут в products_col — перерисовываем и его
+        render_products()
+
+        # В раскладке «Телефон» чек уходит под товары узкой колонкой, как на экране телефона
+        phone = view["layout"] == "phone"
+        cart_col.classes(replace="w-full max-w-lg shrink-0" if phone else "w-96 shrink-0")
+        sale_row.classes(replace="w-full gap-4 items-start "
+                                 + ("flex-col" if phone else "no-wrap"))
+
         cart_col.clear()
-        with cart_col:
+        with cart_col, ui.card().classes("w-full p-4 gap-2 sticky top-20"):
             with ui.row().classes("w-full items-center justify-between"):
-                ui.label("Чек").classes("text-2xl font-bold")
+                ui.label("Чек").classes("text-xl font-black")
                 if cart:
-                    ui.button("Очистить чек", icon="delete",
-                              on_click=clear_cart).props("flat color=red")
+                    ui.button("Очистить", icon="delete",
+                              on_click=clear_cart).props("flat dense color=negative")
             if not cart:
-                ui.label("Пусто").classes("text-gray-500 text-lg")
+                ui.label("Пусто. Нажмите товар слева.").classes("py-6 text-center text-base") \
+                    .style("color: var(--text-muted)")
             for idx, c in enumerate(cart):
                 label = c["name"] + (f" [{', '.join(c['mod_labels'])}]" if c["mod_labels"] else "")
-                with ui.row().classes("items-center gap-2 w-full"):
-                    ui.label(label).classes("flex-1 text-lg")
+                with ui.row().classes("items-center gap-2 w-full py-1 no-wrap") \
+                        .style("border-bottom: 1px solid var(--border-subtle)"):
+                    with ui.column().classes("gap-0 flex-1 min-w-0"):
+                        ui.label(label).classes("text-base font-medium leading-tight")
+                        ui.label(f"{line_sum_tiyn(c) / 100:.0f} тг").classes("text-sm") \
+                            .style("color: var(--text-secondary)")
 
                     def dec(i=idx) -> None:
                         cart[i]["qty"] -= 1
@@ -321,35 +510,101 @@ def sale_page() -> None:
                         cart[i]["qty"] += 1
                         render_cart()
 
-                    ui.button("−", on_click=dec).props("round").classes("text-xl")
-                    ui.label(f"{c['qty']}").classes("text-xl font-bold w-8 text-center")
-                    ui.button("+", on_click=inc).props("round").classes("text-xl")
-            ui.separator()
+                    ui.button("−", on_click=dec).props("round dense flat").classes("text-xl")
+                    ui.label(f"{c['qty']}").classes("text-lg font-bold text-center").style("width:28px")
+                    ui.button("+", on_click=inc).props("round dense flat").classes("text-xl")
             if cart:
                 disc = order_discount_tiyn()
-                with ui.row().classes("w-full items-center justify-between"):
-                    ui.label(f"Подытог: {cart_subtotal_tiyn()/100:.0f} тг").classes("text-base")
-                    ui.button("Скидка на чек", icon="percent",
-                              on_click=open_discount_dialog).props("flat")
+                with ui.row().classes("w-full items-center justify-between pt-1"):
+                    ui.label(f"Подытог: {cart_subtotal_tiyn() / 100:.0f} тг").classes("text-sm") \
+                        .style("color: var(--text-secondary)")
+                    ui.button("Скидка", icon="percent",
+                              on_click=open_discount_dialog).props("flat dense")
                 if disc:
-                    ui.label(f"Скидка: −{disc/100:.0f} тг").classes("text-orange-700")
-            ui.label(f"Итого: {cart_total_tiyn()/100:.0f} тг").classes("text-2xl font-bold")
+                    ui.label(f"Скидка: −{disc / 100:.0f} тг") \
+                        .style("color: var(--status-warning)")
+            with ui.row().classes("w-full items-baseline justify-between pt-1"):
+                ui.label("Итого").classes("text-base").style("color: var(--text-secondary)")
+                ui.label(f"{cart_total_tiyn() / 100:.0f} тг").classes("text-3xl font-black")
             if cart:
                 ui.button("Оплата", on_click=open_payment).classes("w-full h-16 text-xl")
 
     def open_payment() -> None:
         total = cart_total_tiyn()
-        with ui.dialog() as dialog, ui.card():
-            ui.label(f"К оплате: {total/100:.2f} тг").classes("text-xl")
+        with ui.dialog() as dialog, ui.card().classes("w-full max-w-md p-5 gap-4"):
+            with ui.column().classes("gap-0"):
+                ui.label("К оплате").classes("text-sm").style("color: var(--text-secondary)")
+                ui.label(f"{total / 100:.0f} тг").classes("text-4xl font-black leading-tight")
             split = ui.checkbox("Разделить оплату")
 
-            single_col = ui.column()
+            single_col = ui.column().classes("w-full gap-3")
             with single_col:
-                method = ui.select({"cash": "Наличные", "card": "Карта",
-                                    "kaspi_qr": "Kaspi QR (вручную)",
+                # Способ выбирается карточками с иконками, как в макете; select оставлен
+                # скрытым — на нём завязаны валидация и проведение чека ниже.
+                method = ui.select({"cash": "Наличные",
                                     "kaspi_terminal": "Kaspi (терминал)"},
                                    label="Способ", value="cash")
-                tendered = ui.number("Получено (наличные), тг", value=total / 100, format="%.0f")
+                method.set_visibility(False)
+                methods_grid = ui.grid(columns=2).classes("w-full gap-2")
+
+                def render_methods() -> None:
+                    methods_grid.clear()
+                    with methods_grid:
+                        for mid in ("cash", "kaspi_terminal"):
+                            active = method.value == mid
+                            btn = ui.button(on_click=lambda m=mid: pick_method(m)) \
+                                .props("flat no-caps").classes(
+                                    "flex flex-col items-start justify-center gap-1 "
+                                    "h-20 p-3 rounded-xl w-full cp-method")
+                            btn.style(
+                                "background: var(--coffee-50); border: 2px solid var(--brand-primary)"
+                                if active else
+                                "background: var(--surface-card); border: 2px solid var(--border-subtle)"
+                            )
+                            with btn:
+                                ui.icon(PAYMENT_ICONS[mid], size="24px")
+                                ui.label(_METHOD_LABELS[mid]) \
+                                    .classes("text-base font-bold cp-method-label")
+
+                def pick_method(mid: str) -> None:
+                    method.value = mid
+                    render_methods()
+                    refresh_single()
+
+                render_methods()
+                cash_col = ui.column().classes("w-full gap-2")
+                with cash_col:
+                    tendered = ui.number("Получено (наличные), тг", value=total / 100,
+                                         format="%.0f").props("readonly").classes("w-full")
+                    change_label = ui.label("").classes("text-base font-bold")
+
+                    def refresh_change() -> None:
+                        diff = round((tendered.value or 0) * 100) - total
+                        if diff < 0:
+                            change_label.set_text(f"Не хватает {-diff / 100:.0f} тг")
+                            change_label.style("color: var(--status-danger)")
+                        else:
+                            change_label.set_text(
+                                f"Сдача: {diff / 100:.0f} тг" if diff else "Сдачи нет")
+                            change_label.style("color: var(--text-secondary)")
+
+                    # Моноблок без клавиатуры: сумма набирается мышью, купюрами
+                    # или кнопкой «Без сдачи» под сумму чека.
+                    numpad(tendered, quick=BANKNOTES, exact=int(total / 100),
+                           on_change=refresh_change)
+                    refresh_change()
+
+                terminal_hint = ui.label(
+                    "Терминал сам покажет QR или примет карту. "
+                    "Чек проведётся после подтверждения оплаты."
+                ).classes("text-sm rounded-xl p-3") \
+                    .style("color: var(--text-secondary); background: var(--surface-sunken)")
+
+                def refresh_single() -> None:
+                    cash_col.set_visibility(method.value == "cash")
+                    terminal_hint.set_visibility(method.value == "kaspi_terminal")
+
+                refresh_single()
 
             split_col = ui.column()
             with split_col:
@@ -397,7 +652,9 @@ def sale_page() -> None:
                 with ui.dialog() as adlg, ui.card().classes("gap-3"):
                     ui.label("Скидка выше лимита кассира").classes("text-lg font-bold")
                     ui.label("Одобрение администратора: введите PIN").classes("text-sm text-gray-500")
-                    apin = ui.input("PIN администратора", password=True).props("inputmode=numeric")
+                    apin = ui.input("PIN администратора", password=True) \
+                        .props("inputmode=numeric readonly").classes("w-full")
+                    numpad(apin, money=False, max_len=6)
 
                     async def approve() -> None:
                         try:
@@ -453,8 +710,12 @@ def sale_page() -> None:
                             result = await pay_task
                         except asyncio.CancelledError:
                             wait_dialog.close()
-                            ui.notify("Оплата отменена. Если клиент уже оплатил — проверьте статус на терминале.",
-                                      color="orange")
+                            ui.notify(
+                                "Касса перестала ждать оплату. Терминал API отмены не поддерживает — "
+                                "нажмите «Отмена» на самом терминале, иначе он будет ждать QR ещё "
+                                "до 3 минут. Если клиент уже оплатил — проверьте статус на терминале.",
+                                color="orange", multi_line=True, timeout=10000,
+                            )
                             return
                         except (ValueError, KaspiError) as e:
                             wait_dialog.close()
@@ -553,12 +814,15 @@ def sale_page() -> None:
                     success_host.clear()
                     sale_success(num, extra)
 
-            submit_btn = ui.button("Провести", on_click=confirm_payment)
-            ui.button("Отмена", on_click=dialog.close)
+            submit_btn = ui.button("Провести", on_click=confirm_payment) \
+                .classes("w-full h-16 text-xl")
+            ui.button("Отмена", on_click=dialog.close).props("outline").classes("w-full h-12")
         dialog.open()
 
-    ui.button("← К смене", on_click=lambda: ui.navigate.to("/cashier"))
-    render_cart()
+    ui.button("К смене", icon="arrow_back",
+              on_click=lambda: ui.navigate.to("/cashier")).props("flat")
+    render_layout_switch()
+    render_cart()  # рисует и товары: счётчики на плитках зависят от чека
 
 
 @ui.page("/cashier/refunds")
@@ -608,7 +872,8 @@ def refunds_page() -> None:
             if terminal_paid:
                 ui.label("⚠ Оплата была через терминал Kaspi. Возврат денег сделайте вручную на терминале — система деньги не вернёт.").classes("text-orange-700")
             ui.label("Причина возврата").classes("text-lg")
-            reason = ui.input("Причина")
+            reason = ui.input("Причина").props("readonly").classes("w-full")
+            reason_picker(reason)
 
             def confirm() -> None:
                 if not reason.value or not reason.value.strip():
@@ -650,10 +915,21 @@ def refunds_page() -> None:
             for it, rem in remaining:
                 with ui.row().classes("items-center gap-3"):
                     ui.label(f"{it.name} (куплено {it.qty}, доступно к возврату {rem})").classes("flex-1")
-                    q = ui.number("Вернуть", value=0, min=0, max=rem, format="%.0f")
+                    # Количество — стрелками, чтобы обойтись без клавиатуры
+                    q = ui.number("Вернуть", value=0, min=0, max=rem,
+                                  format="%.0f").props("readonly")
                     qty_inputs[it.id] = q
 
-            reason = ui.input("Причина")
+                    def bump(delta: int, q=q, rem=rem) -> None:
+                        q.value = max(0, min(rem, int(q.value or 0) + delta))
+
+                    ui.button("−", on_click=lambda q=q, rem=rem: bump(-1, q, rem)) \
+                        .props("round dense outline")
+                    ui.button("+", on_click=lambda q=q, rem=rem: bump(1, q, rem)) \
+                        .props("round dense outline")
+
+            reason = ui.input("Причина").props("readonly").classes("w-full")
+            reason_picker(reason)
 
             def confirm() -> None:
                 if not reason.value or not reason.value.strip():

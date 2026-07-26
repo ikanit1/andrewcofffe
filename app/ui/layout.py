@@ -3,7 +3,7 @@ from nicegui import app, ui
 from app.db import SessionLocal
 from app.services import shift_service as ss
 from app.ui import guard
-from app.ui.theme import apply_theme
+from app.ui.theme import apply_theme, theme_button
 
 
 def _logout() -> None:
@@ -27,6 +27,7 @@ def cashier_header() -> None:
             else:
                 ui.label("● Смена закрыта").classes("text-sm text-red-300")
         with ui.row().classes("items-center gap-1"):
+            theme_button()
             ui.button("Домой", icon="home",
                       on_click=lambda: ui.navigate.to("/cashier")).props("flat color=white")
             ui.button("Выход", icon="logout", on_click=_logout).props("flat color=white")
@@ -42,6 +43,7 @@ def admin_header() -> None:
             ui.label("· Админ-панель").classes("text-sm opacity-80")
             ui.label(name).classes("text-base opacity-90")
         with ui.row().classes("items-center gap-1"):
+            theme_button()
             ui.button("Панель", icon="grid_view",
                       on_click=lambda: ui.navigate.to("/admin")).props("flat color=white")
             ui.button("Касса", icon="point_of_sale",

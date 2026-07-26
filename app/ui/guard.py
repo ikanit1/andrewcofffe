@@ -35,4 +35,11 @@ def login_user(user) -> None:
 
 
 def logout() -> None:
+    # Тема — настройка устройства, а не пользователя: переживает выход,
+    # иначе кассир на тёмном моноблоке каждый раз получал бы светлый экран входа.
+    from app.ui.theme import STORAGE_KEY as THEME_KEY
+
+    theme = app.storage.user.get(THEME_KEY)
     app.storage.user.clear()
+    if theme is not None:
+        app.storage.user[THEME_KEY] = theme
