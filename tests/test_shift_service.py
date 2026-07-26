@@ -74,6 +74,40 @@ def test_non_cash_refund_does_not_reduce_expected_cash(session):
     assert ss.expected_cash_tiyn(session, sh.id) == 100000
 
 
+def _split_paid_order(session, sh, cashier, *, total, cash, non_cash):
+    order = Order(shift_id=sh.id, number=1, status="paid",
+                  subtotal_tiyn=total, total_tiyn=total)
+    session.add(order)
+    session.flush()
+    session.add_all([
+        Payment(order_id=order.id, method="cash", amount_tiyn=cash),
+        Payment(order_id=order.id, method="card", amount_tiyn=non_cash),
+    ])
+    session.commit()
+    return order
+
+
+def test_split_paid_refund_reduces_cash_by_cash_share(session):
+    """Чек 400 наличными + 600 картой: полный возврат забирает из ящика 400."""
+    c = _cashier(session)
+    sh = ss.open_shift(session, cashier_id=c.id, opening_cash_tiyn=100000)
+    order = _split_paid_order(session, sh, c, total=100000, cash=40000, non_cash=60000)
+    session.add(Refund(order_id=order.id, amount_tiyn=100000, reason="брак", cashier_id=c.id))
+    session.commit()
+    assert ss.expected_cash_tiyn(session, sh.id) == 100000
+
+
+def test_split_paid_partial_refund_takes_proportional_cash(session):
+    """Возврат половины чека, оплаченного на 40% наличными, забирает 40% от возврата."""
+    c = _cashier(session)
+    sh = ss.open_shift(session, cashier_id=c.id, opening_cash_tiyn=100000)
+    order = _split_paid_order(session, sh, c, total=100000, cash=40000, non_cash=60000)
+    session.add(Refund(order_id=order.id, amount_tiyn=50000, reason="одну убрать", cashier_id=c.id))
+    session.commit()
+    # 100000 старт + 40000 налом − 20000 (40% от возврата 50000)
+    assert ss.expected_cash_tiyn(session, sh.id) == 120000
+
+
 def test_close_shift_records_discrepancy(session):
     c = _cashier(session)
     sh = ss.open_shift(session, cashier_id=c.id, opening_cash_tiyn=100000)

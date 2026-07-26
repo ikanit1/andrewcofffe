@@ -1,4 +1,4 @@
-from sqlalchemy import exists, func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from app.models import CashCollection, Order, Payment, Refund, Shift, User
@@ -71,18 +71,34 @@ def expected_cash_tiyn(session: Session, shift_id: int) -> int:
         session,
         select(func.sum(CashCollection.amount_tiyn)).where(CashCollection.shift_id == shift_id),
     )
-    # В кассе физически лежат только наличные — возврат Kaspi/карты не трогает кассу.
-    # Заказ считается "наличным" только если ВСЕ его оплаты — cash (сплит-оплата
-    # наличные+безнал сейчас не создаётся из UI, это упрощение задокументировано).
-    non_cash_payment = select(Payment.id).where(
-        Payment.order_id == Order.id, Payment.method != "cash"
+    # В кассе физически лежат только наличные, поэтому возврат забирает из ящика
+    # лишь долю, оплаченную наличными: чек 400 налом + 600 картой при полном
+    # возврате уменьшает кассу на 400, а не на 1000 и не на ноль.
+    paid = (
+        select(
+            Payment.order_id.label("order_id"),
+            func.sum(Payment.amount_tiyn).label("total"),
+            func.sum(case((Payment.method == "cash", Payment.amount_tiyn), else_=0)).label("cash"),
+        )
+        .group_by(Payment.order_id)
+        .subquery()
     )
-    refunds = _sum(
-        session,
-        select(func.sum(Refund.amount_tiyn))
-        .join(Order, Order.id == Refund.order_id)
-        .where(Order.shift_id == shift_id, ~exists(non_cash_payment)),
+    refunded = (
+        select(
+            Refund.order_id.label("order_id"),
+            func.sum(Refund.amount_tiyn).label("amount"),
+        )
+        .group_by(Refund.order_id)
+        .subquery()
     )
+    rows = session.execute(
+        select(refunded.c.amount, paid.c.cash, paid.c.total)
+        .select_from(Order)
+        .join(refunded, refunded.c.order_id == Order.id)
+        .join(paid, paid.c.order_id == Order.id)
+        .where(Order.shift_id == shift_id)
+    ).all()
+    refunds = sum(int(amount) * int(cash) // int(total) for amount, cash, total in rows if total)
     return sh.opening_cash_tiyn + cash_sales - collections - refunds
 
 
