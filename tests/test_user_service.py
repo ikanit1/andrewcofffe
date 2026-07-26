@@ -2,6 +2,7 @@ import pytest
 
 from app.auth import hash_pin
 from app.models import User
+from app.services import login_throttle as lt
 from app.services import user_service as us
 
 
@@ -113,3 +114,49 @@ def test_admin_by_pin(session):
     got = us.admin_by_pin(session, "7777")
     assert got is not None and got.id == a.id
     assert us.admin_by_pin(session, "0000") is None
+
+
+def test_authenticate_locks_out_after_repeated_wrong_pin(session):
+    u = _user(session, pin="4821")
+    for _ in range(lt.MAX_ATTEMPTS):
+        assert us.authenticate(session, user_id=u.id, pin="0000") is None
+    with pytest.raises(lt.LockedOut):
+        us.authenticate(session, user_id=u.id, pin="0000")
+    # правильный пин тоже отбивается, пока идёт блокировка
+    with pytest.raises(lt.LockedOut):
+        us.authenticate(session, user_id=u.id, pin="4821")
+
+
+def test_authenticate_success_resets_attempts(session):
+    u = _user(session, pin="4821")
+    for _ in range(lt.MAX_ATTEMPTS - 1):
+        us.authenticate(session, user_id=u.id, pin="0000")
+    assert us.authenticate(session, user_id=u.id, pin="4821") is not None
+    # счётчик обнулён: снова доступен полный лимит
+    for _ in range(lt.MAX_ATTEMPTS - 1):
+        assert us.authenticate(session, user_id=u.id, pin="0000") is None
+
+
+def test_lockout_is_per_user(session):
+    a = _user(session, tid=1, pin="1111")
+    b = _user(session, tid=2, pin="2222")
+    for _ in range(lt.MAX_ATTEMPTS):
+        us.authenticate(session, user_id=a.id, pin="0000")
+    assert us.authenticate(session, user_id=b.id, pin="2222") is not None
+
+
+def test_admin_by_pin_locks_out_after_repeated_guesses(session):
+    _user(session, tid=1, role="admin", pin="7777")
+    for _ in range(lt.MAX_ATTEMPTS):
+        assert us.admin_by_pin(session, "0000") is None
+    with pytest.raises(lt.LockedOut):
+        us.admin_by_pin(session, "0000")
+
+
+def test_admin_by_pin_success_resets_attempts(session):
+    _user(session, tid=1, role="admin", pin="7777")
+    for _ in range(lt.MAX_ATTEMPTS - 1):
+        us.admin_by_pin(session, "0000")
+    assert us.admin_by_pin(session, "7777") is not None
+    for _ in range(lt.MAX_ATTEMPTS - 1):
+        assert us.admin_by_pin(session, "0000") is None

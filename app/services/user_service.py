@@ -6,6 +6,9 @@ from sqlalchemy.orm import Session
 
 from app.auth import hash_pin, validate_init_data, verify_pin
 from app.models import User
+from app.services.login_throttle import throttle
+
+_ADMIN_PIN_KEY = "admin-pin"
 
 
 def _validate_pin(pin: str) -> None:
@@ -73,21 +76,33 @@ def admin_telegram_ids(session: Session) -> list[int]:
 
 
 def admin_by_pin(session: Session, pin: str) -> User | None:
-    """Активный админ, чей PIN совпал (для одобрения скидки над лимитом кассира)."""
+    """Активный админ, чей PIN совпал (для одобрения скидки над лимитом кассира).
+
+    Бросает LockedOut при исчерпании попыток. Ключ общий: угадывающий не называет
+    себя, поэтому лимит здесь на всю точку, а не на пользователя.
+    """
+    throttle.check(_ADMIN_PIN_KEY)
     for u in session.scalars(
         select(User).where(User.role == "admin", User.is_active)
     ).all():
         if u.pin_hash and verify_pin(pin, u.pin_hash):
+            throttle.record_success(_ADMIN_PIN_KEY)
             return u
+    throttle.record_failure(_ADMIN_PIN_KEY)
     return None
 
 
 def authenticate(session: Session, *, user_id: int, pin: str) -> User | None:
+    """Вход по пин-коду. Бросает LockedOut, если попытки по этому пользователю исчерпаны."""
+    key = f"user:{user_id}"
+    throttle.check(key)
     user = session.get(User, user_id)
     if user is None or not user.is_active or not user.pin_hash:
         return None
     if not verify_pin(pin, user.pin_hash):
+        throttle.record_failure(key)
         return None
+    throttle.record_success(key)
     return user
 
 

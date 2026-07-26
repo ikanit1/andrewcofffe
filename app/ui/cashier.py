@@ -13,6 +13,7 @@ from app.services.catalog_service import list_menu
 from app.services.pricing import PaymentInput
 from app.services import pricing
 from app.services import user_service
+from app.services.login_throttle import LockedOut
 from app.models import Modifier, Order, OrderItem, Payment, User
 from app.ui.guard import current_user_id, is_admin, require_user
 from app.ui.layout import cashier_header, sale_success
@@ -399,8 +400,14 @@ def sale_page() -> None:
                     apin = ui.input("PIN администратора", password=True).props("inputmode=numeric")
 
                     async def approve() -> None:
-                        with SessionLocal() as s:
-                            admin = user_service.admin_by_pin(s, (apin.value or "").strip())
+                        try:
+                            with SessionLocal() as s:
+                                admin = user_service.admin_by_pin(s, (apin.value or "").strip())
+                        except LockedOut as e:
+                            apin.value = ""
+                            ui.notify(f"Слишком много попыток. Подождите {e.retry_after_seconds} с.",
+                                      color="red")
+                            return
                         if admin is None:
                             ui.notify("Неверный PIN администратора", color="red")
                             return
