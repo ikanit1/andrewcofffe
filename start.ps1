@@ -271,7 +271,7 @@ if ($Funnel) {
     Set-EnvValue "PUBLIC_URL" $publicUrl
     Ok "Funnel поднят, PUBLIC_URL = $publicUrl"
     Write-Host "      Адрес постоянный: кнопка «Открыть кассу» в боте больше не протухнет." -ForegroundColor DarkGray
-    Write-Host "      Выключить снаружи: $ts funnel --bg $port off" -ForegroundColor DarkGray
+    Write-Host "      Выключить публикацию: tailscale funnel --https=443 off" -ForegroundColor DarkGray
 } else {
     $pub = Get-EnvValue "PUBLIC_URL"
     if ($pub -and $pub -notmatch "localhost|127\.0\.0\.1") {
