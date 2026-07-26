@@ -21,6 +21,10 @@ from app.services import costing, modifier_service, notification_service, pricin
 from app.services.inventory_service import apply_move
 from app.services.pricing import CartLine, PaymentInput
 from app.services.shift_service import current_open_shift
+from app.timezone import to_almaty
+
+_METHOD_LABELS = {"cash": "Наличные", "card": "Карта",
+                  "kaspi_qr": "Kaspi QR", "kaspi_terminal": "Kaspi (терминал)"}
 
 
 @dataclass
@@ -37,6 +41,32 @@ def _next_order_number(session: Session, shift_id: int) -> int:
         select(func.max(Order.number)).where(Order.shift_id == shift_id)
     )
     return (last or 0) + 1
+
+
+def _sale_notification_text(order: Order, resolved, payments: list[PaymentInput],
+                            cashier: User) -> str:
+    """Текст уведомления о продаже: состав чека, сумма, способ оплаты, время."""
+    items = ", ".join(
+        f"{product.name}"
+        + (f" ({', '.join(m.name for m in mods)})" if mods else "")
+        + f" ×{li.qty}"
+        for li, product, mods, _ in resolved
+    )
+    if len(payments) == 1:
+        pay_text = _METHOD_LABELS.get(payments[0].method, payments[0].method)
+    else:
+        # разделённая оплата — показываем сумму по каждому способу
+        pay_text = " + ".join(
+            f"{_METHOD_LABELS.get(p.method, p.method)} {p.amount_tiyn / 100:.2f} тг"
+            for p in payments
+        )
+    when = to_almaty(order.created_at).strftime("%d.%m.%Y %H:%M")
+    return (
+        f"Продажа №{order.number} — {order.total_tiyn / 100:.2f} тг\n"
+        f"{items}\n"
+        f"Оплата: {pay_text}\n"
+        f"{when}, кассир: {cashier.name}"
+    )
 
 
 def create_sale(
@@ -158,6 +188,11 @@ def create_sale(
                 text=(f"Скидка {order_disc / 100:.2f} тг на заказ №{order.number}, "
                       f"кассир: {cashier.name}"),
             )
+
+        notification_service.enqueue(
+            session, kind="sale",
+            text=_sale_notification_text(order, resolved, payments, cashier),
+        )
 
         session.commit()
     except Exception:

@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 NotificationKind = Literal[
     "shift_open", "shift_close", "collection", "refund", "low_stock", "discount",
-    "daily_summary",
+    "daily_summary", "sale",
 ]
 
 

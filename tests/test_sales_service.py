@@ -303,3 +303,27 @@ def test_refund_enqueues_notification(session):
     assert "150000" not in notes[0].text  # сумма должна быть в тенге, не в тиынах
     assert "1500.00" in notes[0].text
     assert "брак" in notes[0].text
+
+
+def test_sale_enqueues_notification(session):
+    cashier, latte, milk, beans, shift = _setup(session)
+    sales.create_sale(session, cashier_id=cashier.id, lines=[_line(latte.id, qty=2)],
+                      payments=[PaymentInput("cash", 300000, 300000)])
+    note = session.query(NotificationOutbox).filter_by(kind="sale").one()
+    assert "Латте ×2" in note.text
+    assert "3000.00" in note.text          # сумма в тенге, не в тиынах
+    assert "300000" not in note.text
+    assert "Наличные" in note.text
+    assert "Кассир" in note.text
+    assert ":" in note.text.splitlines()[-1]  # строка с датой и временем
+
+
+def test_sale_notification_shows_split_payment_methods(session):
+    cashier, latte, milk, beans, shift = _setup(session)
+    sales.create_sale(
+        session, cashier_id=cashier.id, lines=[_line(latte.id)],
+        payments=[PaymentInput("cash", 50000, 50000), PaymentInput("card", 100000, None)],
+    )
+    note = session.query(NotificationOutbox).filter_by(kind="sale").one()
+    assert "Наличные 500.00 тг" in note.text
+    assert "Карта 1000.00 тг" in note.text
