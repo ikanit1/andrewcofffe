@@ -38,6 +38,18 @@ def create_user(session: Session, *, name: str, telegram_id, role: str, pin: str
     return user
 
 
+def set_name(session: Session, user_id: int, name: str) -> None:
+    """Переименование. Имя видно кассиру при входе и попадает в отчёты и уведомления."""
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("Укажите имя")
+    user = session.get(User, user_id)
+    if user is None:
+        raise ValueError("Пользователь не найден")
+    user.name = name
+    session.commit()
+
+
 def set_pin(session: Session, user_id: int, pin: str) -> None:
     _validate_pin(pin)
     user = session.get(User, user_id)
