@@ -20,8 +20,11 @@ $icon = Join-Path $PSScriptRoot "coffee-pos.ico"
 $desktop = [Environment]::GetFolderPath("Desktop")
 $startup = [Environment]::GetFolderPath("Startup")
 $name = "Кофейня — Касса.lnk"
+$statusName = "Состояние кассы.lnk"
 $desktopLnk = Join-Path $desktop $name
 $startupLnk = Join-Path $startup $name
+$statusLnk = Join-Path $desktop $statusName
+$statusScript = Join-Path $PSScriptRoot "status.ps1"
 
 function Ok($t)   { Write-Host "  [ ok ] $t" -ForegroundColor Green }
 function Warn($t) { Write-Host "  [ !  ] $t" -ForegroundColor Yellow }
@@ -31,7 +34,7 @@ Write-Host "=== Ярлыки Coffee POS ===" -ForegroundColor Cyan
 Write-Host ""
 
 if ($Remove) {
-    foreach ($p in @($desktopLnk, $startupLnk)) {
+    foreach ($p in @($desktopLnk, $startupLnk, $statusLnk)) {
         if (Test-Path $p) { Remove-Item $p -Force; Ok "удалён: $p" }
         else { Warn "не найден: $p" }
     }
@@ -42,27 +45,36 @@ if ($Remove) {
 
 if (-not (Test-Path $launcher)) { throw "Не найден $launcher" }
 
-function New-Shortcut($path, $description) {
+function New-Shortcut($path, $description, $script, $visible = $false) {
     $shell = New-Object -ComObject WScript.Shell
     $lnk = $shell.CreateShortcut($path)
-    # powershell.exe с -File: окно скрыто, консоль не мигает у кассира перед глазами
     $lnk.TargetPath = "$Env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
-    $lnk.Arguments = "-NoLogo -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$launcher`""
+    if ($visible) {
+        # Окно состояния должно быть видно — его и открывают, чтобы почитать
+        $lnk.Arguments = "-NoLogo -ExecutionPolicy Bypass -File `"$script`""
+        $lnk.WindowStyle = 1
+    } else {
+        # Запуск кассы: окно скрыто, консоль не мигает у кассира перед глазами
+        $lnk.Arguments = "-NoLogo -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$script`""
+        $lnk.WindowStyle = 7
+    }
     $lnk.WorkingDirectory = $root
     $lnk.Description = $description
     if (Test-Path $icon) { $lnk.IconLocation = "$icon,0" }
-    $lnk.WindowStyle = 7   # свернуть окно PowerShell
     $lnk.Save()
     [Runtime.InteropServices.Marshal]::ReleaseComObject($shell) | Out-Null
 }
 
-New-Shortcut $desktopLnk "Открыть кассу кофейни"
-Ok "Ярлык на рабочем столе: $name"
+New-Shortcut $desktopLnk "Открыть кассу кофейни" $launcher
+Ok "Кнопка запуска на рабочем столе: $name"
+
+New-Shortcut $statusLnk "Проверить: сервер, веб-интерфейс, киоск, автозапуск" $statusScript $true
+Ok "Кнопка проверки на рабочем столе: $statusName"
 
 if ($NoAutostart) {
     Warn "Автозапуск не настраивался (флаг -NoAutostart)"
 } else {
-    New-Shortcut $startupLnk "Автозапуск кассы кофейни"
+    New-Shortcut $startupLnk "Автозапуск кассы кофейни" $launcher
     Ok "Автозапуск при входе в систему настроен"
     Write-Host "        папка: $startup" -ForegroundColor DarkGray
 }
