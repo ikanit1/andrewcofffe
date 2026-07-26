@@ -10,3 +10,4 @@ backups/
 logs/
 *.pdf
 tools/
+.claude/
