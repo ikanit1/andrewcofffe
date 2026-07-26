@@ -139,6 +139,46 @@ def test_order_discount_enqueues_notification(session):
     assert "150.00" in notes[0].text  # 10% от 1500 тг = 150 тг
 
 
+def test_order_discount_is_spread_over_line_totals(session):
+    """Скидка на чек должна уменьшать позиции: сумма строк = итог чека."""
+    cashier, latte, milk, beans, shift = _setup(session)
+    order = sales.create_sale(
+        session, cashier_id=cashier.id, lines=[_line(latte.id)],
+        payments=[PaymentInput("cash", 135000, 135000)],
+        order_discount_kind="percent", order_discount_value=10,
+    )
+    items = session.query(OrderItem).filter_by(order_id=order.id).all()
+    assert sum(it.line_total_tiyn for it in items) == order.total_tiyn == 135000
+
+
+def test_order_discount_remainder_lands_on_last_line(session):
+    """Неделимый остаток скидки не теряется: сумма строк точно равна итогу."""
+    cashier, latte, milk, beans, shift = _setup(session)
+    # 3 позиции по 1500 тг, скидка 100 тг: 10000/3 = 3333 с остатком 1 тиын
+    order = sales.create_sale(
+        session, cashier_id=cashier.id,
+        lines=[_line(latte.id), _line(latte.id), _line(latte.id)],
+        payments=[PaymentInput("cash", 440000, 440000)],
+        order_discount_kind="amount", order_discount_value=10000,
+    )
+    items = session.query(OrderItem).filter_by(order_id=order.id).order_by(OrderItem.id).all()
+    assert [it.line_total_tiyn for it in items] == [146667, 146667, 146666]
+    assert sum(it.line_total_tiyn for it in items) == order.total_tiyn == 440000
+
+
+def test_full_refund_returns_exactly_what_guest_paid(session):
+    """Возврат чека со скидкой не должен превышать уплаченную сумму."""
+    cashier, latte, milk, beans, shift = _setup(session)
+    order = sales.create_sale(
+        session, cashier_id=cashier.id, lines=[_line(latte.id)],
+        payments=[PaymentInput("cash", 135000, 135000)],
+        order_discount_kind="percent", order_discount_value=10,
+    )
+    refund = sales.refund_sale(session, order_id=order.id, cashier_id=cashier.id,
+                               reason="не понравилось")
+    assert refund.amount_tiyn == order.total_tiyn == 135000
+
+
 def test_sale_requires_open_shift(session):
     cashier, latte, milk, beans, shift = _setup(session)
     ss.close_shift(session, shift_id=shift.id, counted_cash_tiyn=0)

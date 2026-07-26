@@ -76,6 +76,23 @@ def test_negative_and_bad_inputs_rejected():
         p.validate_payments(100000, [p.PaymentInput("cash", -1, None)])
 
 
+def test_spread_order_discount_is_proportional():
+    assert p.spread_order_discount_tiyn([100000, 300000], 40000) == [10000, 30000]
+
+
+def test_spread_order_discount_remainder_goes_to_last_line():
+    # 10000/3 = 3333 с остатком 1 тиын — сумма долей должна точно равняться скидке
+    shares = p.spread_order_discount_tiyn([150000, 150000, 150000], 10000)
+    assert shares == [3333, 3333, 3334]
+    assert sum(shares) == 10000
+
+
+def test_spread_order_discount_handles_zero_cases():
+    assert p.spread_order_discount_tiyn([150000], 0) == [0]
+    assert p.spread_order_discount_tiyn([0, 0], 0) == [0, 0]
+    assert p.spread_order_discount_tiyn([], 0) == []
+
+
 def test_cart_line_from_dict_shape():
     # форма данных, которую cashier.py кладёт в корзину: base_price + список дельт модификаторов
     line = p.CartLine(base_price_tiyn=150000, qty=2, unit_cost_tiyn=0,

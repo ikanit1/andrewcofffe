@@ -97,11 +97,14 @@ def create_sale(
         resolved.append((li, product, mods, cart_line))
 
     cart_lines = [r[3] for r in resolved]
+    line_totals = [pricing.line_total_tiyn(cl) for cl in cart_lines]
     subtotal = pricing.order_subtotal_tiyn(cart_lines)
     order_disc = pricing.order_discount_tiyn(subtotal, order_discount_kind, order_discount_value)
     if not discount_approved and not pricing.discount_within_limit_tiyn(subtotal, order_disc, limit):
         raise PermissionError("Скидка на чек превышает лимит кассира")
     total = pricing.order_total_tiyn(subtotal, order_disc)
+    # скидка чека разносится по строкам: возврат и отчёты считают деньги по ним
+    order_disc_shares = pricing.spread_order_discount_tiyn(line_totals, order_disc)
 
     pricing.validate_payments(total, payments)
 
@@ -118,15 +121,15 @@ def create_sale(
         session.add(order)
         session.flush()
 
-        for li, product, mods, cart_line in resolved:
+        for (li, product, mods, cart_line), disc_share in zip(resolved, order_disc_shares):
             item = OrderItem(
                 order_id=order.id,
                 product_id=product.id,
                 name=product.name,
                 unit_price_tiyn=pricing.line_unit_price_tiyn(cart_line),
                 qty=li.qty,
-                discount_tiyn=pricing.line_discount_tiyn(cart_line),
-                line_total_tiyn=pricing.line_total_tiyn(cart_line),
+                discount_tiyn=pricing.line_discount_tiyn(cart_line) + disc_share,
+                line_total_tiyn=pricing.line_total_tiyn(cart_line) - disc_share,
                 unit_cost_tiyn=cart_line.unit_cost_tiyn,
             )
             session.add(item)

@@ -86,6 +86,23 @@ def order_total_tiyn(subtotal_tiyn: int, order_discount_tiyn_value: int) -> int:
     return subtotal_tiyn - order_discount_tiyn_value
 
 
+def spread_order_discount_tiyn(line_totals: list[int], order_discount: int) -> list[int]:
+    """Делит скидку чека между позициями пропорционально их сумме.
+
+    Неделимый остаток кладётся на последнюю позицию, поэтому сумма долей всегда
+    точно равна order_discount — иначе строки чека не сошлись бы с итогом, а
+    возврат и отчёты считают деньги именно по строкам.
+    """
+    if not line_totals:
+        return []
+    subtotal = sum(line_totals)
+    if subtotal <= 0 or order_discount <= 0:
+        return [0] * len(line_totals)
+    shares = [order_discount * lt // subtotal for lt in line_totals[:-1]]
+    shares.append(order_discount - sum(shares))
+    return shares
+
+
 def validate_payments(total_tiyn: int, payments: list[PaymentInput]) -> None:
     for pay in payments:
         if pay.amount_tiyn < 0:
