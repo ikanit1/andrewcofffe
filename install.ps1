@@ -33,7 +33,9 @@ $envPath = Join-Path $root ".env"
 if (-not (Test-Path $envPath)) {
     $secret = [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
     $token = Read-Host "Токен Telegram-бота (Enter — пропустить, бэкапы будут только локально)"
-    @(
+    # Строго без BOM: Set-Content -Encoding UTF8 в PowerShell 5.1 его добавляет,
+    # и pydantic-settings читает первый ключ как "﻿BOT_TOKEN" — то есть теряет его.
+    [System.IO.File]::WriteAllLines($envPath, [string[]]@(
         "BOT_TOKEN=$token"
         "STORAGE_SECRET=$secret"
         "PUBLIC_URL=http://localhost:8080"
@@ -42,7 +44,7 @@ if (-not (Test-Path $envPath)) {
         "BACKUP_TIME=03:00"
         "BACKUP_KEEP_DAYS=14"
         "BACKUPS_DIR=backups"
-    ) | Set-Content -Path $envPath -Encoding UTF8
+    ), [System.Text.UTF8Encoding]::new($false))
     Write-Host ".env создан (секрет сгенерирован)." -ForegroundColor Green
 }
 

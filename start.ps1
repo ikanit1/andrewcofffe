@@ -65,9 +65,19 @@ function Invoke-SystemPython($py, $arguments) {
 }
 
 # --- .env -----------------------------------------------------------------
+# .env пишем строго без BOM: Set-Content -Encoding UTF8 в PowerShell 5.1 его добавляет,
+# и тогда pydantic-settings читает первый ключ как "﻿BOT_TOKEN" — то есть теряет его.
+function Write-EnvLines($lines) {
+    [System.IO.File]::WriteAllLines($envPath, [string[]]$lines, [System.Text.UTF8Encoding]::new($false))
+}
+
+function Read-EnvLines {
+    if (-not (Test-Path $envPath)) { return @() }
+    return [System.IO.File]::ReadAllLines($envPath)  # ReadAllLines снимает BOM, если он есть
+}
+
 function Get-EnvValue($key) {
-    if (-not (Test-Path $envPath)) { return $null }
-    foreach ($line in (Get-Content $envPath -Encoding UTF8)) {
+    foreach ($line in (Read-EnvLines)) {
         if ($line -match "^\s*$key\s*=\s*(.*)$") { return $Matches[1].Trim() }
     }
     return $null
@@ -76,14 +86,22 @@ function Get-EnvValue($key) {
 function Set-EnvValue($key, $value) {
     $lines = @()
     $found = $false
-    if (Test-Path $envPath) {
-        foreach ($line in (Get-Content $envPath -Encoding UTF8)) {
-            if ($line -match "^\s*$key\s*=") { $lines += "$key=$value"; $found = $true }
-            else { $lines += $line }
-        }
+    foreach ($line in (Read-EnvLines)) {
+        if ($line -match "^\s*$key\s*=") { $lines += "$key=$value"; $found = $true }
+        else { $lines += $line }
     }
     if (-not $found) { $lines += "$key=$value" }
-    Set-Content -Path $envPath -Value $lines -Encoding UTF8
+    Write-EnvLines $lines
+}
+
+# Чинит .env, испорченный прежними версиями скрипта. $true — если правка потребовалась.
+function Repair-EnvBom {
+    if (-not (Test-Path $envPath)) { return $false }
+    $bytes = [System.IO.File]::ReadAllBytes($envPath)
+    if ($bytes.Length -lt 3) { return $false }
+    if ($bytes[0] -ne 0xEF -or $bytes[1] -ne 0xBB -or $bytes[2] -ne 0xBF) { return $false }
+    Write-EnvLines ([System.IO.File]::ReadAllLines($envPath))
+    return $true
 }
 
 # --- Tailscale ------------------------------------------------------------
@@ -168,7 +186,7 @@ if (-not (Test-Path $envPath)) {
     Write-Host "      Токен Telegram-бота от @BotFather." -ForegroundColor Cyan
     Write-Host "      Enter — пропустить: касса будет работать, но без уведомлений и бэкапов в чат." -ForegroundColor DarkGray
     $token = Read-Host "      BOT_TOKEN"
-    @(
+    Write-EnvLines @(
         "BOT_TOKEN=$token"
         "STORAGE_SECRET=$secret"
         "PUBLIC_URL=$localUrl"
@@ -177,8 +195,12 @@ if (-not (Test-Path $envPath)) {
         "BACKUP_TIME=03:00"
         "BACKUP_KEEP_DAYS=14"
         "BACKUPS_DIR=backups"
-    ) | Set-Content -Path $envPath -Encoding UTF8
+    )
     Ok ".env создан, STORAGE_SECRET сгенерирован"
+}
+
+if (Repair-EnvBom) {
+    Warn "В .env был BOM — приложение не видело первый ключ. Исправлено."
 }
 
 $secret = Get-EnvValue "STORAGE_SECRET"
