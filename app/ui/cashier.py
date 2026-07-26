@@ -26,6 +26,10 @@ from app.kaspi.client import KaspiError
 _METHOD_LABELS = {"cash": "Наличные", "card": "Карта",
                   "kaspi_qr": "Kaspi QR", "kaspi_terminal": "Kaspi (терминал)"}
 
+# Способы оплаты на всю сумму. Карты нет: она принимается терминалом Kaspi,
+# отдельная ручная отметка «Карта» только путала бы отчётность.
+SINGLE_METHODS = ("cash", "kaspi_qr", "kaspi_terminal")
+
 
 @ui.page("/cashier")
 def cashier_page() -> None:
@@ -541,8 +545,7 @@ def sale_page() -> None:
             with single_col:
                 # Способ выбирается карточками с иконками, как в макете; select оставлен
                 # скрытым — на нём завязаны валидация и проведение чека ниже.
-                method = ui.select({"cash": "Наличные",
-                                    "kaspi_terminal": "Kaspi (терминал)"},
+                method = ui.select({m: _METHOD_LABELS[m] for m in SINGLE_METHODS},
                                    label="Способ", value="cash")
                 method.set_visibility(False)
                 methods_grid = ui.grid(columns=2).classes("w-full gap-2")
@@ -550,7 +553,7 @@ def sale_page() -> None:
                 def render_methods() -> None:
                     methods_grid.clear()
                     with methods_grid:
-                        for mid in ("cash", "kaspi_terminal"):
+                        for mid in SINGLE_METHODS:
                             active = method.value == mid
                             btn = ui.button(on_click=lambda m=mid: pick_method(m)) \
                                 .props("flat no-caps").classes(
@@ -599,10 +602,17 @@ def sale_page() -> None:
                     "Чек проведётся после подтверждения оплаты."
                 ).classes("text-sm rounded-xl p-3") \
                     .style("color: var(--text-secondary); background: var(--surface-sunken)")
+                qr_hint = ui.label(
+                    "Оплату отмечает кассир вручную — система её не проверяет. "
+                    "Убедитесь, что деньги пришли, и только потом проводите чек. "
+                    "В отчётах помечается как ручная."
+                ).classes("text-sm rounded-xl p-3") \
+                    .style("color: var(--status-warning); background: var(--status-warning-bg)")
 
                 def refresh_single() -> None:
                     cash_col.set_visibility(method.value == "cash")
                     terminal_hint.set_visibility(method.value == "kaspi_terminal")
+                    qr_hint.set_visibility(method.value == "kaspi_qr")
 
                 refresh_single()
 
