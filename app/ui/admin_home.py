@@ -19,6 +19,7 @@ _GROUPS: list[tuple[str, list[tuple[str, str, str, str]]]] = [
     ("Настройки", [
         ("group", "Пользователи", "Кассиры, роли, PIN", "/admin/users"),
         ("contactless", "Kaspi терминал", "Подключение оплаты", "/admin/kaspi"),
+        ("system_update", "Версия и обновление", "Проверить, вышла ли новая", "/admin/about"),
     ]),
 ]
 
