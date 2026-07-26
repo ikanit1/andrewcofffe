@@ -41,6 +41,22 @@ def admin_about_page() -> None:
                 btn.enable()
             _render(res)
 
+        def _subtitle(res: updates.UpdateCheck) -> str:
+            """Пояснение под статусом.
+
+            Слово «сервер» здесь не годится: в кассе так называют моноблок,
+            на котором она и работает, — владелец решит, что сравнивают с ним.
+            Когда версии совпали, второй строки нет вовсе: повторять одно и то же
+            число дважды бессмысленно.
+            """
+            if res.status == "outdated":
+                return f"Доступна {res.remote}, у вас {res.local}"
+            if res.status == "ahead":
+                return f"У вас {res.local}, опубликована {res.remote}"
+            if res.error:
+                return "Нет связи с GitHub — касса работает как обычно"
+            return ""
+
         def _render(res: updates.UpdateCheck) -> None:
             icon, color, title = _STATUS_VIEW[res.status]
             result_box.clear()
@@ -49,12 +65,10 @@ def admin_about_page() -> None:
                     ui.icon(icon, size="28px").style(f"color: {color}")
                     with ui.column().classes("gap-0 min-w-0"):
                         ui.label(title).classes("text-lg font-bold leading-tight")
-                        if res.remote:
-                            ui.label(f"На сервере: {res.remote} · у вас: {res.local}") \
-                                .classes("text-sm").style("color: var(--text-secondary)")
-                        elif res.error:
-                            ui.label("Нет связи с GitHub — касса работает как обычно") \
-                                .classes("text-sm").style("color: var(--text-secondary)")
+                        sub = _subtitle(res)
+                        if sub:
+                            ui.label(sub).classes("text-sm") \
+                                .style("color: var(--text-secondary)")
                 if res.status == "outdated":
                     _how_to_update()
 
@@ -84,3 +98,6 @@ def admin_about_page() -> None:
 
         btn = ui.button("Проверить обновление", icon="refresh", on_click=check) \
             .props("no-caps")
+        ui.label("Сверяется с версией, опубликованной на GitHub. "
+                 "Проверка ничего не скачивает и не меняет.") \
+            .classes("text-xs").style("color: var(--text-muted)")
