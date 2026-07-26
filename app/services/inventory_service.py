@@ -62,6 +62,71 @@ def _check_low_stock(session: Session, ing: Ingredient) -> None:
         ing.low_stock_notified = False
 
 
+def adjust_stock(
+    session: Session, ingredient_id: int, *, new_qty: int, note: str | None = None
+) -> StockMove | None:
+    """Ручная правка остатка админом: выставляет остаток в указанное значение.
+
+    Пишется движением kind="adjustment" на разницу, а не присваиванием stock_qty:
+    остаток обязан оставаться суммой журнала, иначе история и факт разъедутся.
+    Среднюю себестоимость не трогаем — при пересчёте вручную она неизвестна,
+    а выдумывать её значило бы испортить расчёт маржи.
+    """
+    ing = session.get(Ingredient, ingredient_id)
+    if ing is None:
+        raise ValueError(f"Позиция склада {ingredient_id} не найдена")
+    if new_qty < 0:
+        raise ValueError("Остаток не может быть отрицательным")
+    delta = new_qty - ing.stock_qty
+    if delta == 0:
+        return None
+    move = apply_move(
+        session, ingredient_id,
+        qty_delta=delta, kind="adjustment",
+        note=note or "ручная корректировка", commit=False,
+    )
+    session.commit()
+    return move
+
+
+def update_ingredient(
+    session: Session, ingredient_id: int, *,
+    name: str | None = None, unit: str | None = None,
+    low_stock_threshold: int | None = None,
+) -> Ingredient:
+    """Правка карточки позиции. Остаток здесь не меняется — для него adjust_stock."""
+    ing = session.get(Ingredient, ingredient_id)
+    if ing is None:
+        raise ValueError(f"Позиция склада {ingredient_id} не найдена")
+    if name is not None:
+        name = name.strip()
+        if not name:
+            raise ValueError("Укажите название")
+        ing.name = name
+    if unit is not None:
+        if unit not in ("г", "мл", "шт"):
+            raise ValueError("Единица: г, мл или шт")
+        ing.unit = unit
+    if low_stock_threshold is not None:
+        if low_stock_threshold < 0:
+            raise ValueError("Порог не может быть отрицательным")
+        ing.low_stock_threshold = low_stock_threshold
+        # Порог могли поднять выше текущего остатка — тогда нужно уведомить заново
+        ing.low_stock_notified = False
+        _check_low_stock(session, ing)
+    session.commit()
+    return ing
+
+
+def set_ingredient_active(session: Session, ingredient_id: int, active: bool) -> None:
+    """Скрыть позицию из списков, не удаляя: на неё ссылаются прошлые движения."""
+    ing = session.get(Ingredient, ingredient_id)
+    if ing is None:
+        raise ValueError(f"Позиция склада {ingredient_id} не найдена")
+    ing.is_active = active
+    session.commit()
+
+
 def receive_purchase(
     session: Session, ingredient_id: int, *, qty: int, total_cost_tiyn: int
 ) -> None:
