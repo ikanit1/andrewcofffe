@@ -2,6 +2,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Category, Product
+from app.services import images
 
 _PRODUCT_UPDATABLE_FIELDS = {
     "name",
@@ -70,11 +71,15 @@ def update_product(session: Session, product_id: int, **fields) -> Product:
 
 
 def set_product_image(session: Session, product_id: int, data: bytes, mime: str) -> None:
+    """Сохраняет фото товара. Тип определяется по содержимому, а не по заголовку:
+    /product-image отдаёт файл обратно с сохранённым типом, поэтому доверять
+    присланному значению нельзя — см. app/services/images.py."""
     p = session.get(Product, product_id)
     if p is None:
         raise ValueError(f"Товар {product_id} не найден")
+    real_mime = images.validate_image(data, claimed_mime=mime)
     p.image = data
-    p.image_mime = mime or "image/jpeg"
+    p.image_mime = real_mime
     p.has_image = True
     session.commit()
 
@@ -106,6 +111,23 @@ def list_menu(session: Session) -> list[tuple[Category, list[Product]]]:
         prods = session.scalars(
             select(Product)
             .where(Product.category_id == cat.id, Product.is_active)
+            .order_by(Product.sort_order, Product.name)
+        ).all()
+        result.append((cat, list(prods)))
+    return result
+
+
+def list_menu_admin(session: Session) -> list[tuple[Category, list[Product]]]:
+    """Как list_menu, но включает скрытые товары — экрану редактирования меню
+    нужно показывать их приглушёнными с возможностью вернуть, а не прятать совсем."""
+    cats = session.scalars(
+        select(Category).where(Category.is_active).order_by(Category.sort_order, Category.name)
+    ).all()
+    result = []
+    for cat in cats:
+        prods = session.scalars(
+            select(Product)
+            .where(Product.category_id == cat.id)
             .order_by(Product.sort_order, Product.name)
         ).all()
         result.append((cat, list(prods)))

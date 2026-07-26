@@ -4,7 +4,12 @@ __pycache__/
 *.db
 *.db-wal
 *.db-shm
+# Шаблон ".env" совпадал только с файлом ровно такого имени: копия вроде
+# "andrewcoffe.env" или ".env.backup" утекла бы в репозиторий вместе с токеном.
 .env
+*.env
+.env.*
+!.env.example
 .nicegui/
 backups/
 logs/

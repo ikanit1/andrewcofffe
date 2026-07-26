@@ -62,7 +62,14 @@ def create_app(start_bot: bool = True) -> FastAPI:
         if img is None:
             return Response(status_code=404)
         data, mime = img
-        return Response(content=data, media_type=mime)
+        # nosniff — чтобы браузер не «додумывал» тип вопреки заголовку, а CSP
+        # обезвреживает содержимое, даже если в БД каким-то образом попал не тот файл
+        # (например, из бэкапа, сделанного до проверки формата при загрузке).
+        return Response(content=data, media_type=mime, headers={
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+            "Cache-Control": "private, max-age=300",
+        })
 
     from app.ui import register_pages
 
