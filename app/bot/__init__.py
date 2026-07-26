@@ -1,7 +1,7 @@
 import asyncio
 
 from aiogram import Bot, Dispatcher
-from aiogram.filters import CommandStart
+from aiogram.filters import Command, CommandStart
 from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -39,6 +39,24 @@ async def cmd_start(message: Message) -> None:
         ]]
     )
     await message.answer(f"Здравствуйте, {user.name}! Роль: {user.role}.", reply_markup=kb)
+
+
+@dp.message(Command("today"))
+async def cmd_today(message: Message) -> None:
+    """Сводка за день по запросу — то же, что уходит вечером автоматически."""
+    from app.services.daily_summary import daily_summary_text
+
+    with SessionLocal() as session:
+        user = (
+            session.query(User)
+            .filter_by(telegram_id=message.from_user.id, is_active=True)
+            .one_or_none()
+        )
+        if user is None or user.role != "admin":
+            await message.answer("Сводка доступна только администратору.")
+            return
+        text = daily_summary_text(session)
+    await message.answer(text)
 
 
 async def run_bot() -> None:

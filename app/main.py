@@ -27,11 +27,16 @@ def create_app(start_bot: bool = True) -> FastAPI:
 
             backup_task = asyncio.create_task(run_backup_scheduler())
             backup_task.add_done_callback(_log_task_exit)
+        summary_task = None
+        if settings.daily_summary_enabled:
+            from app.services.daily_summary import run_daily_summary_scheduler
+
+            summary_task = asyncio.create_task(run_daily_summary_scheduler())
+            summary_task.add_done_callback(_log_task_exit)
         yield
-        if bot_task is not None:
-            bot_task.cancel()
-        if backup_task is not None:
-            backup_task.cancel()
+        for task in (bot_task, backup_task, summary_task):
+            if task is not None:
+                task.cancel()
 
     app = FastAPI(title="Coffee POS", lifespan=lifespan)
     if settings.storage_secret == "change-me-in-env":

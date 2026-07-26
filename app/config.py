@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     backup_time: str = "03:00"          # Asia/Almaty
     backup_keep_days: int = 14
     backups_dir: str = "backups"
+    daily_summary_enabled: bool = True
+    daily_summary_time: str = "22:00"   # Asia/Almaty
 
 
 settings = Settings()
