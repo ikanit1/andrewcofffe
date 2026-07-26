@@ -323,17 +323,20 @@ Ok "Порт $port свободен"
 
 if (-not $NoBrowser) {
     Start-Job -ScriptBlock {
-        param($u)
+        param($u, $probe)
         for ($i = 0; $i -lt 60; $i++) {
             try {
-                if ((Invoke-WebRequest -UseBasicParsing "$u/health" -TimeoutSec 2).StatusCode -eq 200) {
+                if ((Invoke-WebRequest -UseBasicParsing $probe -TimeoutSec 3).StatusCode -eq 200) {
                     Start-Process $u
                     break
                 }
             } catch { }
             Start-Sleep -Seconds 1
         }
-    } -ArgumentList $localUrl | Out-Null
+        # Готовность проверяем строго по IPv4: сервер слушает 0.0.0.0, а localhost
+        # на Windows резолвится сначала в ::1 — запрос ждёт отказа от IPv6 и
+        # не укладывается в таймаут, из-за чего браузер не открывался вовремя.
+    } -ArgumentList $localUrl, "http://127.0.0.1:$port/health" | Out-Null
 }
 
 Write-Host ""

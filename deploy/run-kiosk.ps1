@@ -2,10 +2,15 @@
 # Ищем Edge, затем Chrome; если браузера нет — открываем окно по умолчанию.
 $ErrorActionPreference = "SilentlyContinue"
 $url = "http://localhost:8080"
+# Проверяем готовность строго по IPv4. Сервер слушает 0.0.0.0 (только IPv4),
+# а localhost на Windows резолвится сначала в ::1 — запрос ждёт отказа от IPv6
+# и не укладывается в таймаут. Из-за этого проверка не проходила никогда,
+# и касса открывалась только после всех 60 попыток.
+$probe = "http://127.0.0.1:8080/health"
 
 for ($i = 0; $i -lt 60; $i++) {
     try {
-        $r = Invoke-WebRequest -UseBasicParsing "$url/health" -TimeoutSec 2
+        $r = Invoke-WebRequest -UseBasicParsing $probe -TimeoutSec 3
         if ($r.StatusCode -eq 200) { break }
     } catch {}
     Start-Sleep -Seconds 1
@@ -46,13 +51,20 @@ if (-not $browser) {
 $profileDir = Join-Path $Env:LOCALAPPDATA "CoffeePOS\kiosk-profile"
 if (-not (Test-Path $profileDir)) { New-Item -ItemType Directory -Path $profileDir -Force | Out-Null }
 
-$args = @(
+# Киоск уже открыт? Второй экземпляр с тем же профилем не займёт его и сразу
+# закроется — со стороны это выглядит как «окно мигнуло и пропало».
+$running = Get-CimInstance Win32_Process -Filter "Name='chrome.exe' OR Name='msedge.exe'" |
+    Where-Object { $_.CommandLine -like "*CoffeePOS*kiosk-profile*" }
+if ($running) { return }
+
+# Не $args: это служебная переменная PowerShell, её переопределение ненадёжно
+$browserArgs = @(
     "--kiosk", $url,
     "--user-data-dir=$profileDir",
     "--no-first-run",
     "--no-default-browser-check",
     "--disable-features=TranslateUI"
 )
-if ($browser.Kind -eq "edge") { $args += "--edge-kiosk-type=fullscreen" }
+if ($browser.Kind -eq "edge") { $browserArgs += "--edge-kiosk-type=fullscreen" }
 
-& $browser.Path @args
+& $browser.Path @browserArgs

@@ -104,7 +104,9 @@ schtasks /Create /TN "CoffeePOS-Kiosk"  /TR $ksk /SC ONLOGON /F
 # 8. Стартуем сейчас и открываем кассу
 Start-Process powershell "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$root\deploy\run-server.ps1`""
 for ($i = 0; $i -lt 60; $i++) {
-    try { if ((Invoke-WebRequest -UseBasicParsing "http://localhost:8080/health" -TimeoutSec 2).StatusCode -eq 200) { break } } catch {}
+    # Строго по IPv4: сервер слушает 0.0.0.0, а localhost резолвится сначала
+    # в ::1, и запрос не укладывается в таймаут (см. deploy/run-kiosk.ps1)
+    try { if ((Invoke-WebRequest -UseBasicParsing "http://127.0.0.1:8080/health" -TimeoutSec 3).StatusCode -eq 200) { break } } catch {}
     Start-Sleep -Seconds 1
 }
 Start-Process "http://localhost:8080"
