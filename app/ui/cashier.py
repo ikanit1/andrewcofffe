@@ -15,8 +15,8 @@ from app.services import pricing
 from app.services import user_service
 from app.services.login_throttle import LockedOut
 from app.models import Modifier, Order, OrderItem, Payment, User
-from app.ui.design import (BANKNOTES, PAYMENT_ICONS, category_icon, numpad,
-                           reason_picker,
+from app.ui.design import (BANKNOTES, PAYMENT_ICONS, category_icon, empty_state,
+                           numpad, product_media, reason_picker,
                            section_title, stat_tile)
 from app.ui.guard import current_user_id, is_admin, require_user
 from app.ui.layout import cashier_header, sale_success
@@ -300,37 +300,61 @@ def sale_page() -> None:
             ui.icon(category_icon(cat.name), size="26px" if vertical else "22px")
             ui.label(cat.name).classes("text-sm" if vertical else "text-base")
 
-    def _product_card(p, *, big: bool, cat_name: str) -> None:
-        """Плитка товара: название, цена и счётчик в углу, если товар уже в чеке."""
+    def _product_card(p, *, big: bool, cat_name: str, with_media: bool) -> None:
+        """Плитка товара: название, цена и счётчик в углу, если товар уже в чеке.
+
+        with_media — показывать ли полосу с фото. Если в категории нет ни одного
+        фото, полоса не рисуется вовсе: ряд серых заглушек хуже, чем компактная
+        плитка с иконкой, как в макете.
+        """
         qty = qty_in_cart(p.id)
-        card = ui.card().classes("w-full cursor-pointer p-4 gap-1 justify-end cp-hover relative") \
+        # Категорию берём из цикла: объекты меню отсоединены от сессии,
+        # и обращение к p.category подняло бы ленивую загрузку на закрытой сессии.
+        icon = category_icon(cat_name)
+        pad = "p-0 gap-0" if with_media else "p-4 gap-1 justify-end"
+        card = ui.card().classes(f"w-full cursor-pointer {pad} cp-hover relative overflow-hidden") \
             .style(f"min-height: {186 if big else 150}px")
         card.on("click", lambda p=p: add_to_cart(p))
         with card:
-            if getattr(p, "has_image", False):
-                ui.image(f"/product-image/{p.id}").classes("w-14 h-14 object-cover rounded")
+            if with_media:
+                product_media(product_id=p.id, has_image=getattr(p, "has_image", False),
+                              fallback_icon=icon, height=104 if big else 84)
             elif big:
-                # Категорию берём из цикла: объекты меню отсоединены от сессии,
-                # и обращение к p.category подняло бы ленивую загрузку на закрытой сессии.
-                ui.icon(category_icon(cat_name), size="30px") \
-                    .style("color: var(--brand-primary); opacity:.55")
-            ui.label(p.name).classes(
-                f"{'text-2xl' if big else 'text-xl'} font-bold leading-tight")
-            ui.label(f"{p.price_tiyn / 100:.0f} тг") \
-                .classes("text-lg").style("color: var(--text-secondary)")
+                ui.icon(icon, size="30px").style("color: var(--brand-primary); opacity:.55")
+            text_box = ui.column().classes("gap-1 w-full flex-1 justify-end") \
+                .classes("p-4" if with_media else "")
+            with text_box:
+                ui.label(p.name).classes(
+                    f"{'text-2xl' if big else 'text-xl'} font-bold leading-tight")
+                ui.label(f"{p.price_tiyn / 100:.0f} тг") \
+                    .classes("text-lg").style("color: var(--text-secondary)")
             if qty:
                 ui.label(str(qty)).classes(
                     "absolute rounded-full flex items-center justify-center "
                     "text-lg font-black"
                 ).style("top:12px;right:12px;min-width:32px;height:32px;padding:0 8px;"
-                        "background: var(--brand-primary); color: var(--text-on-brand)")
+                        "background: var(--brand-primary); color: var(--text-on-brand);"
+                        "box-shadow: var(--shadow-sm)")
 
-    def _product_row(p) -> None:
+    def _product_row(p, *, cat_name: str, with_media: bool) -> None:
         """Строка товара для раскладки «Телефон»: крупная зона нажатия."""
         qty = qty_in_cart(p.id)
         card = ui.card().classes("w-full cursor-pointer p-4 cp-hover")
         card.on("click", lambda p=p: add_to_cart(p))
         with card, ui.row().classes("items-center gap-3 w-full no-wrap"):
+            if with_media:
+                # В списке фото уместно квадратом слева: строка низкая,
+                # полоса во всю ширину съела бы всю высоту экрана телефона.
+                thumb = ui.element("div").classes(
+                    "flex items-center justify-center shrink-0 rounded-xl overflow-hidden"
+                ).style("width:56px;height:56px;background:var(--surface-sunken)")
+                with thumb:
+                    if getattr(p, "has_image", False):
+                        ui.image(f"/product-image/{p.id}").props("fit=cover no-spinner") \
+                            .classes("w-full h-full")
+                    else:
+                        ui.icon(category_icon(cat_name), size="24px") \
+                            .style("color: var(--brand-primary); opacity:.35")
             with ui.column().classes("gap-0 flex-1 min-w-0"):
                 ui.label(p.name).classes("text-xl font-bold leading-tight")
                 ui.label(f"{p.price_tiyn / 100:.0f} тг").classes("text-lg") \
@@ -352,12 +376,31 @@ def sale_page() -> None:
         products_col.clear()
         if not menu:
             with products_col:
-                ui.label("Меню пустое").style("color: var(--text-secondary)")
+                if is_admin():
+                    empty_state(
+                        icon="restaurant_menu",
+                        title="В меню пока нет товаров",
+                        hint="Добавьте категории и товары — они появятся здесь "
+                             "плитками для продажи.",
+                        action_label="Перейти в «Меню и цены»",
+                        action_icon="arrow_forward",
+                        on_action=lambda: ui.navigate.to("/admin/menu"),
+                    )
+                else:
+                    empty_state(
+                        icon="restaurant_menu",
+                        title="В меню пока нет товаров",
+                        hint="Меню заполняет администратор. Попросите владельца "
+                             "добавить товары — тогда можно будет пробивать чеки.",
+                    )
             return
         cat_sel = next((c for c, _ in menu if c.id == view["cat_id"]), menu[0][0])
         products = next((ps for c, ps in menu if c.id == cat_sel.id), menu[0][1])
         cat_name = cat_sel.name
         layout = view["layout"]
+        # Полосу с фото показываем, только если в категории есть хоть одно фото:
+        # иначе экран превратился бы в ряд одинаковых серых заглушек.
+        with_media = any(getattr(p, "has_image", False) for p in products)
         with products_col:
             if layout == "rail":
                 # Категории узкой колонкой слева, товары — крупной сеткой справа
@@ -368,7 +411,7 @@ def sale_page() -> None:
                     with ui.grid().classes("flex-1 min-w-0 gap-4") \
                             .style("grid-template-columns: repeat(auto-fill, minmax(210px, 1fr))"):
                         for p in products:
-                            _product_card(p, big=True, cat_name=cat_name)
+                            _product_card(p, big=True, cat_name=cat_name, with_media=with_media)
                 return
 
             with ui.row().classes("w-full gap-2 flex-wrap"):
@@ -377,12 +420,12 @@ def sale_page() -> None:
             if layout == "phone":
                 with ui.column().classes("w-full gap-2 max-w-lg"):
                     for p in products:
-                        _product_row(p)
+                        _product_row(p, cat_name=cat_name, with_media=with_media)
             else:
                 with ui.grid().classes("w-full gap-3") \
                         .style("grid-template-columns: repeat(auto-fill, minmax(180px, 1fr))"):
                     for p in products:
-                        _product_card(p, big=False, cat_name=cat_name)
+                        _product_card(p, big=False, cat_name=cat_name, with_media=with_media)
 
     def cart_subtotal_tiyn() -> int:
         all_mod_ids = {mid for c in cart for mid in c["modifier_ids"]}

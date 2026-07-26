@@ -138,7 +138,10 @@ def admin_menu_page() -> None:
                     .style("width:56px;height:56px;border-radius:12px;"
                            "background:var(--surface-sunken);flex:none"):
                 if p.has_image:
-                    ui.image(f"/product-image/{p.id}").classes("w-full h-full object-cover")
+                    # fit=cover — свойство QImg; CSS-класс object-cover на обёртке
+                    # не доходит до самого <img> внутри компонента Quasar.
+                    ui.image(f"/product-image/{p.id}").props("fit=cover no-spinner") \
+                        .classes("w-full h-full")
                 else:
                     ui.icon(category_icon(cat.name), size="26px").style("color:var(--brand-primary)")
 

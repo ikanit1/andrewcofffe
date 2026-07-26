@@ -34,6 +34,52 @@ def category_icon(name: str) -> str:
     return _CATEGORY_FALLBACK
 
 
+def product_media(*, product_id: int, has_image: bool, fallback_icon: str,
+                  height: int) -> None:
+    """Верхняя полоса плитки товара: фото или единообразная заглушка.
+
+    Высота фиксирована, кадрирование — cover. Иначе ряд плиток «пляшет»: у фото
+    произвольные пропорции, и без обрезки Quasar показал бы их целиком, добавив
+    поля по краям, а товар без фото занимал бы меньше места, чем соседи.
+
+    Заглушка нужна именно как блок той же высоты: если у одного товара фото есть,
+    а у другого нет, разнобой заметнее, чем отсутствие картинок вообще.
+    """
+    box = ui.element("div").classes("w-full flex items-center justify-center shrink-0") \
+        .style(f"height:{height}px;background:var(--surface-sunken);overflow:hidden")
+    with box:
+        if has_image:
+            # fit=cover — свойство QImg; CSS-класс на обёртке сюда не доходит,
+            # внутри лежит собственный контейнер Quasar.
+            ui.image(f"/product-image/{product_id}").props("fit=cover no-spinner") \
+                .classes("w-full h-full")
+        else:
+            ui.icon(fallback_icon, size="34px") \
+                .style("color: var(--brand-primary); opacity:.35")
+
+
+def empty_state(*, icon: str, title: str, hint: str = "",
+                action_label: str | None = None, action_icon: str | None = None,
+                on_action=None) -> None:
+    """Заглушка для пустого экрана: иконка, объяснение и, если есть куда идти, кнопка.
+
+    Сообщение вида «добавьте их в /admin/stock» — тупик: путь написан текстом,
+    нажать нельзя. Здесь переход даётся кнопкой, а вызывающий код решает,
+    показывать ли её: вести кассира в админский раздел бессмысленно.
+    """
+    with ui.column().classes("w-full items-center gap-3 py-12 px-5 rounded-2xl") \
+            .style("background: var(--surface-card); "
+                   "border: 1px dashed var(--border-default)"):
+        ui.icon(icon, size="34px").style("color: var(--text-muted)")
+        ui.label(title).classes("text-lg font-bold text-center")
+        if hint:
+            ui.label(hint).classes("text-sm text-center max-w-md") \
+                .style("color: var(--text-secondary)")
+        if action_label and on_action is not None:
+            ui.button(action_label, icon=action_icon, on_click=on_action) \
+                .props("no-caps").classes("mt-1")
+
+
 def section_title(text: str) -> None:
     """Мелкий заголовок раздела капсом — как в макете над группами карточек."""
     ui.label(text).classes("text-xs uppercase tracking-wider mt-2") \

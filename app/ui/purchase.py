@@ -6,7 +6,8 @@ from app.db import SessionLocal
 from app.models import Ingredient, StockMove
 from app.services import inventory_service as inv
 from app.timezone import to_almaty
-from app.ui.guard import require_user
+from app.ui.design import empty_state
+from app.ui.guard import is_admin, require_user
 from app.ui.layout import cashier_header
 
 
@@ -25,7 +26,25 @@ def purchase_page() -> None:
         }
 
     if not ing_options:
-        ui.label("Нет складских позиций. Добавьте их в /admin/stock").classes("text-red-600")
+        # Кнопка — только админу: /admin/stock закрыт require_admin, и кассир
+        # упёрся бы в «Доступ только для администратора».
+        if is_admin():
+            empty_state(
+                icon="inventory_2",
+                title="Ещё нет складских позиций",
+                hint="Приход оформляется на позицию склада — молоко, зерно, стаканы. "
+                     "Заведите их, и здесь появится форма прихода.",
+                action_label="Перейти в «Склад и тех-карты»",
+                action_icon="arrow_forward",
+                on_action=lambda: ui.navigate.to("/admin/stock"),
+            )
+        else:
+            empty_state(
+                icon="inventory_2",
+                title="Ещё нет складских позиций",
+                hint="Их заводит администратор в разделе «Склад и тех-карты». "
+                     "Попросите владельца добавить позиции — тогда приход можно будет оформить.",
+            )
         return
 
     sel_ing = ui.select(ing_options, label="Позиция склада")
