@@ -13,16 +13,46 @@ $root = $PSScriptRoot
 Set-Location $root
 Write-Host "=== Установка Coffee POS ===" -ForegroundColor Cyan
 
-# 2. Python 3.13
-& py -3.13 --version 2>$null
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "Python 3.13 не найден — ставлю через winget..." -ForegroundColor Yellow
-    winget install -e --id Python.Python.3.13 --accept-source-agreements --accept-package-agreements
+# 2. Python: подойдёт любой 3.11+, а не только 3.13 — на машине может стоять
+#    более новый, и winget есть не везде, поэтому жёстко на него не завязываемся.
+function Find-SystemPython {
+    foreach ($c in @(@("py","-3.13"), @("py","-3.12"), @("py","-3.11"), @("py","-3"), @("python"))) {
+        try {
+            $exe = $c[0]
+            $prefix = if ($c.Count -gt 1) { $c[1] } else { $null }
+            $a = if ($prefix) { @($prefix,"-c","import sys;print(sys.version_info[:2])") }
+                 else { @("-c","import sys;print(sys.version_info[:2])") }
+            $out = & $exe @a 2>$null
+            if ($LASTEXITCODE -eq 0 -and $out -match '\((\d+), (\d+)\)') {
+                if ([int]$Matches[1] -eq 3 -and [int]$Matches[2] -ge 11) {
+                    return @{ Exe = $exe; Prefix = $prefix }
+                }
+            }
+        } catch { }
+    }
+    return $null
 }
 
 # 3. venv + зависимости
 if (-not (Test-Path (Join-Path $root ".venv"))) {
-    & py -3.13 -m venv .venv
+    $sysPy = Find-SystemPython
+    if (-not $sysPy) {
+        $wg = Get-Command winget -ErrorAction SilentlyContinue
+        if ($wg) {
+            Write-Host "Python 3.11+ не найден — ставлю через winget..." -ForegroundColor Yellow
+            winget install -e --id Python.Python.3.13 --accept-source-agreements --accept-package-agreements
+            Write-Host "Закройте окно и запустите install.ps1 заново — нужен обновлённый PATH." -ForegroundColor Yellow
+            Read-Host "Enter — закрыть"
+            exit 1
+        }
+        Write-Host "Python 3.11+ не найден, winget на этой машине тоже нет." -ForegroundColor Red
+        Write-Host "Скачайте Python с https://www.python.org/downloads/ (галочка «Add python.exe to PATH»)" -ForegroundColor Yellow
+        Start-Process "https://www.python.org/downloads/"
+        Read-Host "Enter — закрыть"
+        exit 1
+    }
+    if ($sysPy.Prefix) { & $sysPy.Exe $sysPy.Prefix -m venv .venv }
+    else { & $sysPy.Exe -m venv .venv }
 }
 $venvPy = Join-Path $root ".venv\Scripts\python.exe"
 & $venvPy -m pip install --upgrade pip
@@ -68,7 +98,10 @@ $ksk = "powershell -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$root\dep
 schtasks /Create /TN "CoffeePOS-Server" /TR $srv /SC ONLOGON /RL HIGHEST /F
 schtasks /Create /TN "CoffeePOS-Kiosk"  /TR $ksk /SC ONLOGON /F
 
-# 7. Стартуем сейчас и открываем кассу
+# 7. Ярлык на рабочем столе (в папке пользователя, права администратора не нужны)
+& (Join-Path $root "deploy\install-shortcuts.ps1") -NoAutostart
+
+# 8. Стартуем сейчас и открываем кассу
 Start-Process powershell "-WindowStyle Hidden -ExecutionPolicy Bypass -File `"$root\deploy\run-server.ps1`""
 for ($i = 0; $i -lt 60; $i++) {
     try { if ((Invoke-WebRequest -UseBasicParsing "http://localhost:8080/health" -TimeoutSec 2).StatusCode -eq 200) { break } } catch {}
