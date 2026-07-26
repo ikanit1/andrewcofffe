@@ -24,8 +24,11 @@ REMOTE_VERSION_URL = (
 )
 _TIMEOUT_SECONDS = 10.0
 
-# Версия — дата выпуска: 2026.07.27. Три числа, разделённые точками.
-_VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
+# Версия — дата выпуска и, необязательно, порядковый номер выпуска за этот день:
+# 2026.07.27 или 2026.07.27.2. Номер нужен потому, что за сутки обновление могут
+# выпустить не один раз, а по одной дате касса решила бы, что менять нечего.
+# Отсутствующий номер считаем нулём: 2026.07.27 старше, чем 2026.07.27.1.
+_VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?$")
 
 Status = Literal["current", "outdated", "ahead", "unknown"]
 
@@ -39,14 +42,19 @@ class UpdateCheck:
 
 
 def parse_version(text: str | None) -> tuple[int, ...] | None:
-    """(2026, 7, 27) из «2026.07.27». None — распознать не удалось."""
+    """(2026, 7, 27, 0) из «2026.07.27», (2026, 7, 27, 2) из «2026.07.27.2».
+
+    Длина всегда 4 — чтобы версии сравнивались как кортежи без оговорок.
+    None — распознать не удалось.
+    """
     if not text:
         return None
     first_line = text.strip().splitlines()[0].strip() if text.strip() else ""
     m = _VERSION_RE.match(first_line)
     if m is None:
         return None
-    return tuple(int(g) for g in m.groups())
+    year, month, day, seq = m.groups()
+    return (int(year), int(month), int(day), int(seq or 0))
 
 
 def compare_versions(local: str, remote: str) -> Status:

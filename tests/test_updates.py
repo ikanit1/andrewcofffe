@@ -6,10 +6,13 @@ from app.services import updates
 
 
 @pytest.mark.parametrize("text, expected", [
-    ("2026.07.27", (2026, 7, 27)),
-    (" 2026.07.27\n", (2026, 7, 27)),
-    ("2026.07.27\n# комментарий", (2026, 7, 27)),
-    ("2026.7.5", (2026, 7, 5)),
+    ("2026.07.27", (2026, 7, 27, 0)),
+    (" 2026.07.27\n", (2026, 7, 27, 0)),
+    ("2026.07.27\n# комментарий", (2026, 7, 27, 0)),
+    ("2026.7.5", (2026, 7, 5, 0)),
+    # Четвёртое число — порядковый выпуск за день: за сутки бывает несколько.
+    ("2026.07.27.1", (2026, 7, 27, 1)),
+    ("2026.07.27.12", (2026, 7, 27, 12)),
 ])
 def test_parses_version(text, expected):
     assert updates.parse_version(text) == expected
@@ -18,6 +21,18 @@ def test_parses_version(text, expected):
 @pytest.mark.parametrize("text", ["", "   ", "не версия", "2026", "2026.07.27.1.2", "v1.2.3-beta"])
 def test_rejects_unparseable_version(text):
     assert updates.parse_version(text) is None
+
+
+def test_same_day_release_is_newer_than_bare_date():
+    """2026.07.27.1 вышла после 2026.07.27 — иначе первый выпуск дня
+    выглядел бы старше исходного и обновление бы не предложилось."""
+    assert updates.compare_versions("2026.07.27", "2026.07.27.1") == "outdated"
+    assert updates.compare_versions("2026.07.27.1", "2026.07.27") == "ahead"
+
+
+def test_same_day_releases_compare_by_sequence():
+    assert updates.compare_versions("2026.07.27.2", "2026.07.27.10") == "outdated"
+    assert updates.compare_versions("2026.07.27.3", "2026.07.27.3") == "current"
 
 
 def test_same_version_is_current():

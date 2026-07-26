@@ -1,0 +1,62 @@
+#!/bin/sh
+# Проставляет версию в файл VERSION перед каждым коммитом.
+#
+# Формат: ГГГГ.ММ.ДД.N, где N — порядковый выпуск за этот день. Номер нужен
+# потому, что за сутки код правят не по одному разу, а по одной дате касса
+# в кофейне решила бы, что обновляться не на что.
+#
+# Подключается один раз в клоне:
+#     git config core.hooksPath deploy/hooks
+# Каталог .git/hooks не отслеживается git — через core.hooksPath хук едет
+# вместе с проектом и одинаков у всех.
+set -e
+
+root=$(git rev-parse --show-toplevel)
+version_file="$root/VERSION"
+
+# Во время слияния и перебазирования версию не трогаем: коммит там технический,
+# а правка файла посреди операции легко превращается в конфликт.
+git_dir=$(git rev-parse --git-dir)
+for marker in MERGE_HEAD REBASE_HEAD CHERRY_PICK_HEAD; do
+    if [ -f "$git_dir/$marker" ]; then
+        exit 0
+    fi
+done
+
+staged=$(git diff --cached --name-only --diff-filter=ACMR)
+if [ -z "$staged" ]; then
+    exit 0
+fi
+
+# Если правится только сам VERSION — значит версию задают руками, не мешаем.
+if [ "$staged" = "VERSION" ]; then
+    exit 0
+fi
+
+today=$(date +%Y.%m.%d)
+current=""
+if [ -f "$version_file" ]; then
+    current=$(head -n 1 "$version_file" | tr -d '[:space:]')
+fi
+
+case "$current" in
+    "$today")
+        # Была голая дата без номера — это выпуск №0, следующий первый.
+        next="$today.1"
+        ;;
+    "$today".*)
+        seq=${current##*.}
+        case "$seq" in
+            ''|*[!0-9]*) next="$today.1" ;;
+            *)           next="$today.$((seq + 1))" ;;
+        esac
+        ;;
+    *)
+        # Другой день (или файла не было) — начинаем сутки заново.
+        next="$today"
+        ;;
+esac
+
+printf '%s\n' "$next" > "$version_file"
+git add "$version_file"
+echo "VERSION: $current -> $next"
