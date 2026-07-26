@@ -1,6 +1,10 @@
 from nicegui import ui
 
-from app.services import updates
+from app.db import SessionLocal
+from app.services import shift_service as ss
+from app.services import updater, updates, user_service
+from app.services.login_throttle import LockedOut
+from app.ui.design import numpad
 from app.ui.guard import require_admin
 from app.ui.layout import admin_header
 
@@ -74,27 +78,103 @@ def admin_about_page() -> None:
 
         def _how_to_update() -> None:
             ui.separator()
-            ui.label("Как обновить").classes("text-base font-bold")
-            ui.label(
-                "Закройте смену, затем запустите update.ps1 в папке кассы: "
-                "правой кнопкой → Run with PowerShell. Скрипт заберёт новую "
-                "версию, доставит зависимости и перезапустит сервер."
-            ).classes("text-sm").style("color: var(--text-secondary)")
             with ui.row().classes("items-start gap-2 no-wrap p-3 rounded-xl") \
                     .style("background: var(--status-success-bg)"):
                 ui.icon("shield", size="20px").style("color: var(--status-success)")
                 ui.label(
-                    "База данных при обновлении не трогается: продажи, меню, "
-                    "пользователи и остатки останутся на месте. Обновляется только код."
+                    "База данных не трогается: продажи, меню, пользователи, остатки "
+                    "и настройки Kaspi останутся на месте. Обновляется только код, "
+                    "а копия базы кладётся в backups перед началом."
                 ).classes("text-sm").style("color: var(--text-primary)")
-            with ui.row().classes("items-start gap-2 no-wrap p-3 rounded-xl") \
-                    .style("background: var(--surface-sunken)"):
-                ui.icon("info", size="20px").style("color: var(--text-secondary)")
-                ui.label(
-                    "Кнопки «обновить» здесь намеренно нет: касса доступна из "
-                    "интернета, и запуск обновления через веб дал бы способ "
-                    "выполнить чужой код. Обновление — только с самого моноблока."
-                ).classes("text-sm").style("color: var(--text-secondary)")
+
+            with SessionLocal() as s:
+                shift_open = ss.current_open_shift(s) is not None
+
+            if shift_open:
+                with ui.row().classes("items-start gap-2 no-wrap p-3 rounded-xl") \
+                        .style("background: var(--status-warning-bg)"):
+                    ui.icon("lock_clock", size="20px").style("color: var(--status-warning)")
+                    ui.label(
+                        "Сейчас открыта смена. Обновление перезапускает кассу, "
+                        "поэтому сначала закройте смену."
+                    ).classes("text-sm").style("color: var(--text-primary)")
+                return
+
+            ui.button("Обновить и перезапустить", icon="system_update",
+                      on_click=_ask_pin).props("no-caps")
+            hint = ("После обновления касса перезапустится сама, страница обновится."
+                    if updater.is_supervised() else
+                    "Автоперезапуск не настроен: код обновится, а кассу нужно будет "
+                    "перезапустить вручную через start.ps1.")
+            ui.label(hint).classes("text-xs").style("color: var(--text-muted)")
+
+        def _ask_pin() -> None:
+            """PIN администратора перед обновлением.
+
+            Касса смотрит в интернет через Funnel. Одной открытой вкладки
+            для запуска обновления мало: пусть тот, кто нажимает, подтвердит,
+            что он администратор, а не перехваченная сессия.
+            """
+            with ui.dialog() as dlg, ui.card().classes("gap-3 min-w-80"):
+                ui.label("Подтвердите обновление").classes("text-lg font-bold")
+                ui.label("Касса будет перезапущена. Введите PIN администратора.") \
+                    .classes("text-sm").style("color: var(--text-secondary)")
+                pin = ui.input("PIN", password=True).props("inputmode=numeric readonly") \
+                    .classes("w-full")
+                numpad(pin, money=False, max_len=6)
+
+                async def confirm() -> None:
+                    try:
+                        with SessionLocal() as s:
+                            admin = user_service.admin_by_pin(s, (pin.value or "").strip())
+                    except LockedOut as e:
+                        pin.value = ""
+                        ui.notify(f"Слишком много попыток. Подождите {e.retry_after_seconds} с.",
+                                  color="red")
+                        return
+                    if admin is None:
+                        pin.value = ""
+                        ui.notify("Неверный PIN администратора", color="red")
+                        return
+                    dlg.close()
+                    await _do_update()
+
+                with ui.row().classes("gap-2"):
+                    ui.button("Обновить", on_click=confirm).props("no-caps")
+                    ui.button("Отмена", on_click=dlg.close).props("flat no-caps")
+            dlg.open()
+
+        async def _do_update() -> None:
+            result_box.clear()
+            with result_box, ui.card().classes("w-full p-5 gap-2"):
+                ui.spinner(size="2rem")
+                ui.label("Обновляю: забираю код и ставлю зависимости…") \
+                    .classes("text-base")
+                ui.label("Это занимает до минуты. Не закрывайте страницу.") \
+                    .classes("text-xs").style("color: var(--text-muted)")
+
+            with SessionLocal() as s:
+                res = await updater.apply_update(s)
+
+            result_box.clear()
+            color = "var(--status-success)" if res.ok else "var(--status-danger)"
+            with result_box, ui.card().classes("w-full p-5 gap-3"):
+                with ui.row().classes("items-center gap-3 no-wrap"):
+                    ui.icon("check_circle" if res.ok else "error", size="28px") \
+                        .style(f"color: {color}")
+                    ui.label(res.message).classes("text-base font-bold")
+                for step in res.steps:
+                    ui.label(f"• {step}").classes("text-sm") \
+                        .style("color: var(--text-secondary)")
+                if res.log:
+                    with ui.expansion("Подробности").classes("w-full"):
+                        ui.code(res.log).classes("w-full text-xs")
+
+            if res.restart_scheduled:
+                # Перезагружаем страницу позже перезапуска сервера, иначе браузер
+                # постучится в ещё не поднявшийся порт и покажет ошибку.
+                ui.timer(8.0, lambda: ui.navigate.reload(), once=True)
+                updater.schedule_restart()
 
         btn = ui.button("Проверить обновление", icon="refresh", on_click=check) \
             .props("no-caps")
