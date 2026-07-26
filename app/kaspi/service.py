@@ -59,7 +59,7 @@ def _map_result(data: dict) -> PaymentResult:
 
 
 async def run_payment(client, total_tiyn: int, *, poll_interval: float = 1.0,
-                      max_polls: int = 180) -> PaymentResult:
+                      max_polls: int = 240) -> PaymentResult:
     """Полный цикл оплаты на уже сконфигурированном клиенте (без БД).
 
     Проверяет сумму, запускает payment, опрашивает статус; при unknown пробует actualize.
@@ -116,7 +116,7 @@ async def register_cashier(session: Session) -> None:
 
 
 async def pay(session: Session, total_tiyn: int, *, poll_interval: float = 1.0,
-              max_polls: int = 180) -> PaymentResult:
+              max_polls: int = 240) -> PaymentResult:
     """Оплата с настройками из БД. Требует зарегистрированной кассы (есть access_token)."""
     s = ksettings.get_settings(session)
     if s.protection_enabled and not s.access_token:
