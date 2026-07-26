@@ -31,7 +31,13 @@ $venvPy = Join-Path $root ".venv\Scripts\python.exe"
 # 4. .env (если нет)
 $envPath = Join-Path $root ".env"
 if (-not (Test-Path $envPath)) {
-    $secret = [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
+    # Не [RandomNumberGenerator]::GetBytes(int) — статический оверлоад появился
+    # только в .NET 6+, а в Windows PowerShell 5.1 (.NET Framework) его нет.
+    $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
+    $secretBytes = New-Object byte[] 32
+    $rng.GetBytes($secretBytes)
+    $rng.Dispose()
+    $secret = [Convert]::ToBase64String($secretBytes)
     $token = Read-Host "Токен Telegram-бота (Enter — пропустить, бэкапы будут только локально)"
     # Строго без BOM: Set-Content -Encoding UTF8 в PowerShell 5.1 его добавляет,
     # и pydantic-settings читает первый ключ как "﻿BOT_TOKEN" — то есть теряет его.

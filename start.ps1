@@ -181,7 +181,13 @@ if ($reqHash -ne $knownHash) {
 # =========================================================================
 if (-not (Test-Path $envPath)) {
     Warn "Файла .env нет — создаю."
-    $secret = [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
+    # Не [RandomNumberGenerator]::GetBytes(int) — статический оверлоад появился
+    # только в .NET 6+, а в Windows PowerShell 5.1 (.NET Framework) его нет.
+    $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
+    $secretBytes = New-Object byte[] 32
+    $rng.GetBytes($secretBytes)
+    $rng.Dispose()
+    $secret = [Convert]::ToBase64String($secretBytes)
     Write-Host ""
     Write-Host "      Токен Telegram-бота от @BotFather." -ForegroundColor Cyan
     Write-Host "      Enter — пропустить: касса будет работать, но без уведомлений и бэкапов в чат." -ForegroundColor DarkGray
@@ -214,7 +220,9 @@ Ok "Настройки (.env) прочитаны"
 # =========================================================================
 $users = "0"
 try {
-    $users = (& $venvPy -c "from app.db import SessionLocal; from app.models import User; s=SessionLocal(); print(s.query(User).count()); s.close()").Trim()
+    # init_db() создаёт таблицы, если pos.db ещё не существует — на самом первом
+    # запуске без него запрос упал бы с "no such table: users" прямо в консоль.
+    $users = (& $venvPy -c "from app.db import init_db, SessionLocal; init_db(); from app.models import User; s=SessionLocal(); print(s.query(User).count()); s.close()").Trim()
 } catch { $users = "0" }
 
 if ($users -eq "0") {
