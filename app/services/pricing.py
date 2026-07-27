@@ -110,8 +110,21 @@ def validate_payments(total_tiyn: int, payments: list[PaymentInput]) -> None:
         if pay.method not in ("cash", "card", "kaspi_qr", "kaspi_terminal"):
             raise ValueError(f"Неизвестный способ оплаты: {pay.method}")
     covered = sum(pay.amount_tiyn for pay in payments)
-    if covered != total_tiyn:
-        raise ValueError(f"Оплата {covered} не покрывает итог {total_tiyn}")
+    if covered == total_tiyn:
+        return
+    # Суммы — в тенге: кассир мыслит ими, а «99000 против 110000» читается
+    # как ошибка на сотню тысяч, хотя расходится 110 тг. И переплату нельзя
+    # называть «не покрывает» — гость дал больше, а не меньше.
+    diff = abs(covered - total_tiyn) / 100
+    if covered < total_tiyn:
+        raise ValueError(
+            f"Оплата {covered / 100:.0f} тг меньше итога {total_tiyn / 100:.0f} тг — "
+            f"не хватает {diff:.0f} тг"
+        )
+    raise ValueError(
+        f"Оплата {covered / 100:.0f} тг больше итога {total_tiyn / 100:.0f} тг "
+        f"на {diff:.0f} тг"
+    )
 
 
 def cash_change_tiyn(payments: list[PaymentInput]) -> int:

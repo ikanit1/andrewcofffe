@@ -28,6 +28,25 @@ _METHOD_LABELS = {"cash": "Наличные", "card": "Карта",
                   "kaspi_qr": "Kaspi QR", "kaspi_terminal": "Kaspi (терминал)"}
 
 
+class PriceChanged(Exception):
+    """Цена изменилась между сбором корзины и проведением чека.
+
+    Отдельный тип, а не общий ValueError: причина не в кассире, а в том, что
+    под ним поменялись цены — чаще всего началась или кончилась акция. Отличать
+    это от ошибки со сдачей обязательно, иначе кассир получает сообщение
+    про несходящуюся оплату и не понимает, что делать.
+    """
+
+    def __init__(self, expected_tiyn: int, actual_tiyn: int) -> None:
+        self.expected_tiyn = expected_tiyn
+        self.actual_tiyn = actual_tiyn
+        direction = "выросла" if actual_tiyn > expected_tiyn else "снизилась"
+        super().__init__(
+            f"Цена {direction}, пока собирали чек: было {expected_tiyn / 100:.0f} тг, "
+            f"стало {actual_tiyn / 100:.0f} тг. Проверьте чек и проведите заново."
+        )
+
+
 @dataclass
 class SaleLineInput:
     product_id: int
@@ -35,6 +54,64 @@ class SaleLineInput:
     modifier_ids: list[int] = field(default_factory=list)
     discount_kind: str | None = None
     discount_value: int = 0
+
+
+def _resolve_lines(session: Session, lines: list[SaleLineInput], *,
+                   limit: int, discount_approved: bool) -> list[tuple]:
+    """Проверяет позиции и считает их цены. Общее для оценки и для проведения:
+    разойтись они не должны, иначе терминал спишет одну сумму, а чек уйдёт с другой."""
+    resolved = []  # (SaleLineInput, Product, [Modifier], CartLine)
+    for li in lines:
+        if li.qty <= 0:
+            raise ValueError("Количество должно быть больше нуля")
+        product = session.get(Product, li.product_id)
+        if product is None or not product.is_active:
+            raise ValueError(f"Товар {li.product_id} недоступен")
+        mods = []
+        for mid in li.modifier_ids:
+            m = session.get(Modifier, mid)
+            if m is None or not m.is_active:
+                raise ValueError(f"Модификатор {mid} недоступен")
+            mods.append(m)
+        chosen_ids = set(li.modifier_ids)
+        for group, group_mods in modifier_service.groups_for_product(session, product.id):
+            if group.is_required and not (chosen_ids & {m.id for m in group_mods}):
+                raise ValueError(f"Не выбрана обязательная группа: {group.name}")
+        cart_line = CartLine(
+            # Цену с учётом акции считает сервер по своим часам: браузер кассира
+            # мог бы показать акционную цену за минуту до её начала или после конца.
+            base_price_tiyn=promo.effective_price_tiyn(product),
+            qty=li.qty,
+            unit_cost_tiyn=costing.unit_cost_tiyn(session, product, li.modifier_ids),
+            modifier_price_deltas=[m.price_delta_tiyn for m in mods],
+            discount_kind=li.discount_kind,
+            discount_value=li.discount_value,
+        )
+        # проверка лимита скидки кассира (позиция) — точное сравнение без округления
+        line_gross = pricing.line_unit_price_tiyn(cart_line) * cart_line.qty
+        if not discount_approved and not pricing.discount_within_limit_tiyn(
+            line_gross, pricing.line_discount_tiyn(cart_line), limit
+        ):
+            raise PermissionError("Скидка превышает лимит кассира")
+        resolved.append((li, product, mods, cart_line))
+    return resolved
+
+
+def quote_total_tiyn(session: Session, *, lines: list[SaleLineInput],
+                     order_discount_kind: str | None = None,
+                     order_discount_value: int = 0) -> int:
+    """Итог чека по текущим ценам, ничего не записывая.
+
+    Нужна там, где деньги списываются до проведения чека — оплата через
+    терминал Kaspi. Узнать об изменившейся цене после списания значит оставить
+    гостя с оплатой и без чека, поэтому сверяемся заранее.
+    """
+    resolved = _resolve_lines(session, lines, limit=100, discount_approved=True)
+    cart_lines = [r[3] for r in resolved]
+    subtotal = pricing.order_subtotal_tiyn(cart_lines)
+    order_disc = pricing.order_discount_tiyn(subtotal, order_discount_kind,
+                                             order_discount_value)
+    return pricing.order_total_tiyn(subtotal, order_disc)
 
 
 def _next_order_number(session: Session, shift_id: int) -> int:
@@ -105,10 +182,15 @@ def create_sale(
     order_discount_kind: str | None = None,
     order_discount_value: int = 0,
     discount_approved: bool = False,
+    expected_total_tiyn: int | None = None,
 ) -> Order:
     """Атомарно проводит чек: заказ + позиции + модификаторы + оплаты + списание склада.
 
     Всё в одной транзакции — при любой ошибке откат, склад и заказ не меняются.
+
+    expected_total_tiyn — итог, который показывала корзина. Если он не сошёлся
+    с пересчитанным, бросается PriceChanged: цена изменилась под кассиром
+    (началась или кончилась акция), и чек нужно пересобрать.
     """
     if not lines:
         raise ValueError("Чек не может быть пустым")
@@ -120,40 +202,8 @@ def create_sale(
         raise ValueError(f"Кассир {cashier_id} не найден")
     limit = cashier.discount_limit_percent
 
-    resolved = []  # (SaleLineInput, Product, [Modifier], CartLine)
-    for li in lines:
-        if li.qty <= 0:
-            raise ValueError("Количество должно быть больше нуля")
-        product = session.get(Product, li.product_id)
-        if product is None or not product.is_active:
-            raise ValueError(f"Товар {li.product_id} недоступен")
-        mods = []
-        for mid in li.modifier_ids:
-            m = session.get(Modifier, mid)
-            if m is None or not m.is_active:
-                raise ValueError(f"Модификатор {mid} недоступен")
-            mods.append(m)
-        chosen_ids = set(li.modifier_ids)
-        for group, group_mods in modifier_service.groups_for_product(session, product.id):
-            if group.is_required and not (chosen_ids & {m.id for m in group_mods}):
-                raise ValueError(f"Не выбрана обязательная группа: {group.name}")
-        cart_line = CartLine(
-            # Цену с учётом акции считает сервер по своим часам: браузер кассира
-            # мог бы показать акционную цену за минуту до её начала или после конца.
-            base_price_tiyn=promo.effective_price_tiyn(product),
-            qty=li.qty,
-            unit_cost_tiyn=costing.unit_cost_tiyn(session, product, li.modifier_ids),
-            modifier_price_deltas=[m.price_delta_tiyn for m in mods],
-            discount_kind=li.discount_kind,
-            discount_value=li.discount_value,
-        )
-        # проверка лимита скидки кассира (позиция) — точное сравнение без округления
-        line_gross = pricing.line_unit_price_tiyn(cart_line) * cart_line.qty
-        if not discount_approved and not pricing.discount_within_limit_tiyn(
-            line_gross, pricing.line_discount_tiyn(cart_line), limit
-        ):
-            raise PermissionError("Скидка превышает лимит кассира")
-        resolved.append((li, product, mods, cart_line))
+    resolved = _resolve_lines(session, lines, limit=limit,
+                              discount_approved=discount_approved)
 
     cart_lines = [r[3] for r in resolved]
     line_totals = [pricing.line_total_tiyn(cl) for cl in cart_lines]
@@ -162,6 +212,10 @@ def create_sale(
     if not discount_approved and not pricing.discount_within_limit_tiyn(subtotal, order_disc, limit):
         raise PermissionError("Скидка на чек превышает лимит кассира")
     total = pricing.order_total_tiyn(subtotal, order_disc)
+    # Сверка с корзиной — до проверки оплаты: при изменившейся цене оплата тоже
+    # не сойдётся, и без этой проверки кассир увидел бы следствие вместо причины.
+    if expected_total_tiyn is not None and expected_total_tiyn != total:
+        raise PriceChanged(expected_total_tiyn, total)
     # скидка чека разносится по строкам: возврат и отчёты считают деньги по ним
     order_disc_shares = pricing.spread_order_discount_tiyn(line_totals, order_disc)
 

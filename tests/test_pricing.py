@@ -98,3 +98,25 @@ def test_cart_line_from_dict_shape():
     line = p.CartLine(base_price_tiyn=150000, qty=2, unit_cost_tiyn=0,
                       modifier_price_deltas=[20000, 5000])
     assert p.line_total_tiyn(line) == (150000 + 20000 + 5000) * 2
+
+
+def test_underpayment_message_names_the_shortfall():
+    with pytest.raises(ValueError, match="не хватает"):
+        p.validate_payments(110000, [p.PaymentInput("cash", 99000, 99000)])
+
+
+def test_overpayment_is_not_called_a_shortfall():
+    """«Оплата не покрывает итог» при переплате — бессмыслица: гость дал больше.
+    Кассиру важно понять, что сумма не сходится в другую сторону."""
+    with pytest.raises(ValueError, match="больше итога") as e:
+        p.validate_payments(99000, [p.PaymentInput("cash", 110000, 110000)])
+    assert "не покрывает" not in str(e.value)
+
+
+def test_payment_error_shows_tenge_not_tiyn():
+    """Кассир мыслит тенге. «Оплата 99000 не покрывает итог 110000» читается
+    как ошибка на сто тысяч, хотя расхождение — 110 тг."""
+    with pytest.raises(ValueError) as e:
+        p.validate_payments(110000, [p.PaymentInput("cash", 99000, 99000)])
+    assert "1100" in str(e.value) and "990" in str(e.value)
+    assert "110000" not in str(e.value)

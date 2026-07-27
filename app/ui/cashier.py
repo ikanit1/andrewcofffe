@@ -757,6 +757,29 @@ def sale_page() -> None:
                     if total % 100 != 0:
                         ui.notify("Kaspi принимает только целые тенге", color="red")
                         return
+                    # Сверяем цену ДО списания: терминал берёт деньги раньше, чем
+                    # проводится чек, и узнать об изменившейся цене после списания
+                    # значило бы оставить гостя с оплатой и без чека.
+                    try:
+                        with SessionLocal() as s:
+                            fresh_total = sales.quote_total_tiyn(
+                                s,
+                                lines=[sales.SaleLineInput(product_id=c["product_id"],
+                                                           qty=c["qty"],
+                                                           modifier_ids=c["modifier_ids"])
+                                       for c in cart],
+                                order_discount_kind=order_discount["kind"],
+                                order_discount_value=order_discount["value"],
+                            )
+                    except (ValueError, PermissionError) as e:
+                        ui.notify(str(e), color="red")
+                        return
+                    if fresh_total != total:
+                        dialog.close()
+                        ui.notify(str(sales.PriceChanged(total, fresh_total)),
+                                  color="orange", timeout=8000)
+                        render_cart()
+                        return
                     submit_btn.disable()  # защита от повторного нажатия во время оплаты
                     pay_task: asyncio.Task | None = None
                     with ui.dialog().props("persistent") as wait_dialog, \
@@ -867,8 +890,16 @@ def sale_page() -> None:
                             order_discount_kind=order_discount["kind"],
                             order_discount_value=order_discount["value"],
                             discount_approved=discount_approved["ok"],
+                            expected_total_tiyn=total,
                         )
                         num = order.number
+                except sales.PriceChanged as e:
+                    # Началась или кончилась акция, пока собирали чек. Пересобираем
+                    # корзину сами: заставлять кассира гадать с гостем у стойки нельзя.
+                    dialog.close()
+                    ui.notify(str(e), color="orange", timeout=8000)
+                    render_cart()
+                    return
                 except (ValueError, PermissionError) as e:
                     ui.notify(str(e), color="red")
                     return

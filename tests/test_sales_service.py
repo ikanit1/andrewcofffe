@@ -361,3 +361,86 @@ def test_sale_charges_base_price_after_promo_ends(session, monkeypatch):
         payments=[PaymentInput("cash", 150000, 150000)],
     )
     assert order.total_tiyn == 150000
+
+
+def test_price_change_since_cart_is_reported_separately(session):
+    """Акция кончилась, пока чек собирали: корзина считала по 990, сервер — по 1100.
+
+    Это не ошибка кассира со сдачей, а изменившаяся под ним цена, и отличать
+    одно от другого обязательно — иначе кассир видит «оплата не покрывает итог»
+    и не понимает, что произошло.
+    """
+    cashier, latte, milk, beans, shift = _setup(session)
+    with pytest.raises(sales.PriceChanged) as e:
+        sales.create_sale(
+            session, cashier_id=cashier.id, lines=[_line(latte.id)],
+            payments=[PaymentInput("cash", 99000, 99000)],
+            expected_total_tiyn=99000,   # столько показывала корзина
+        )
+    assert e.value.expected_tiyn == 99000
+    assert e.value.actual_tiyn == 150000
+    assert session.query(Order).count() == 0
+
+
+def test_matching_expected_total_passes_through(session):
+    cashier, latte, milk, beans, shift = _setup(session)
+    order = sales.create_sale(
+        session, cashier_id=cashier.id, lines=[_line(latte.id)],
+        payments=[PaymentInput("cash", 150000, 150000)],
+        expected_total_tiyn=150000,
+    )
+    assert order.total_tiyn == 150000
+
+
+def test_without_expected_total_behaviour_is_unchanged(session):
+    """Параметр необязательный: старые вызовы и тесты не должны сломаться."""
+    cashier, latte, milk, beans, shift = _setup(session)
+    order = sales.create_sale(
+        session, cashier_id=cashier.id, lines=[_line(latte.id)],
+        payments=[PaymentInput("cash", 150000, 150000)],
+    )
+    assert order.total_tiyn == 150000
+
+
+def test_price_change_checked_before_payment_mismatch(session):
+    """Когда цена изменилась, кассиру нужно сказать именно об этом,
+    а не о несходящейся оплате — она следствие."""
+    cashier, latte, milk, beans, shift = _setup(session)
+    with pytest.raises(sales.PriceChanged):
+        sales.create_sale(
+            session, cashier_id=cashier.id, lines=[_line(latte.id)],
+            payments=[PaymentInput("cash", 99000, 99000)],
+            expected_total_tiyn=99000,
+        )
+
+
+def test_quote_total_matches_what_create_sale_would_charge(session):
+    """Оценка итога до оплаты обязана совпадать с тем, что проведёт чек.
+
+    Нужна для Kaspi: там деньги списывает терминал ДО create_sale, и узнать
+    об изменившейся цене после списания — значит оставить гостя без чека.
+    """
+    cashier, latte, milk, beans, shift = _setup(session)
+    lines = [_line(latte.id, qty=2)]
+
+    quoted = sales.quote_total_tiyn(session, lines=lines)
+    order = sales.create_sale(session, cashier_id=cashier.id, lines=lines,
+                              payments=[PaymentInput("cash", quoted, quoted)])
+    assert quoted == order.total_tiyn == 300000
+
+
+def test_quote_total_accounts_for_order_discount(session):
+    cashier, latte, milk, beans, shift = _setup(session)
+    lines = [_line(latte.id)]
+    quoted = sales.quote_total_tiyn(session, lines=lines,
+                                    order_discount_kind="percent",
+                                    order_discount_value=10)
+    assert quoted == 135000
+
+
+def test_quote_total_rejects_unavailable_product(session):
+    cashier, latte, milk, beans, shift = _setup(session)
+    latte.is_active = False
+    session.commit()
+    with pytest.raises(ValueError):
+        sales.quote_total_tiyn(session, lines=[_line(latte.id)])
