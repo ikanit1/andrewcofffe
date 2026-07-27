@@ -4,7 +4,7 @@ from sqlalchemy.exc import IntegrityError
 from nicegui import ui
 
 from app.db import SessionLocal
-from app.models import Ingredient, RecipeItem
+from app.models import Category, Ingredient, RecipeItem
 from app.services import catalog_service as cs
 from app.services import images
 from app.ui.design import category_icon
@@ -101,6 +101,84 @@ def admin_menu_page() -> None:
             _sidebar_item("all", "Все", "apps", sum(len(prods) for _, prods in menu))
             for cat, prods in menu:
                 _sidebar_item(str(cat.id), cat.name, category_icon(cat.name), len(prods))
+                if state["cat"] == str(cat.id):
+                    # Действия показываем только у выбранной категории: иначе
+                    # в списке из десяти разделов рябит от кнопок.
+                    with ui.row().classes("gap-1 pl-2 pb-1"):
+                        ui.button("Имя", icon="edit",
+                                  on_click=lambda c=cat: _rename_category(c.id, c.name)) \
+                            .props("flat dense no-caps").classes("text-xs")
+                        ui.button("Удалить", icon="delete",
+                                  on_click=lambda c=cat, n=len(prods):
+                                      _delete_category(c.id, c.name, n)) \
+                            .props("flat dense no-caps color=negative").classes("text-xs")
+
+    def _rename_category(cat_id: int, name: str) -> None:
+        with ui.dialog() as dlg, ui.card().classes("gap-3 min-w-80"):
+            ui.label(f"Категория «{name}»").classes("text-lg font-bold")
+            field = ui.input("Название", value=name).classes("w-full")
+
+            def confirm() -> None:
+                try:
+                    with SessionLocal() as s:
+                        cs.rename_category(s, cat_id, field.value)
+                except ValueError as e:
+                    ui.notify(str(e), color="red")
+                    return
+                dlg.close()
+                ui.notify("Переименовано", color="green")
+                refresh()
+
+            field.on("keydown.enter", lambda _: confirm())
+            with ui.row().classes("gap-2"):
+                ui.button("Сохранить", on_click=confirm)
+                ui.button("Отмена", on_click=dlg.close).props("flat")
+        dlg.open()
+
+    def _delete_category(cat_id: int, name: str, count: int) -> None:
+        """Товар обязан лежать в категории, поэтому непустую удаляем только
+        вместе с переносом товаров — иначе они остались бы без раздела."""
+        with ui.dialog() as dlg, ui.card().classes("gap-3 min-w-80"):
+            ui.label(f"Удалить категорию «{name}»?").classes("text-lg font-bold")
+            target = None
+            if count:
+                ui.label(f"В категории {count} товаров. Товар не может остаться "
+                         "без категории — выберите, куда их перенести.") \
+                    .classes("text-sm").style("color: var(--text-secondary)")
+                with SessionLocal() as s:
+                    opts = {c.id: c.name for c in s.scalars(
+                        select(Category).where(Category.id != cat_id)
+                        .order_by(Category.sort_order, Category.name)).all()}
+                if not opts:
+                    ui.label("Других категорий нет — сначала создайте ещё одну.") \
+                        .style("color: var(--status-danger)")
+                else:
+                    target = ui.select(opts, value=next(iter(opts)),
+                                       label="Перенести в").classes("w-full")
+            else:
+                ui.label("Категория пустая.").classes("text-sm") \
+                    .style("color: var(--text-secondary)")
+
+            def confirm() -> None:
+                try:
+                    with SessionLocal() as s:
+                        moved = cs.delete_category(
+                            s, cat_id,
+                            move_to_id=target.value if target is not None else None)
+                except ValueError as e:
+                    ui.notify(str(e), color="red")
+                    return
+                dlg.close()
+                state["cat"] = "all"
+                ui.notify(f"Категория удалена, перенесено товаров: {moved}",
+                          color="green")
+                refresh()
+
+            with ui.row().classes("gap-2"):
+                if not count or target is not None:
+                    ui.button("Удалить", on_click=confirm, color="negative")
+                ui.button("Отмена", on_click=dlg.close).props("flat")
+        dlg.open()
 
     def _sidebar_item(key: str, name: str, icon: str, count: int) -> None:
         cls = "cp-pill-active" if state["cat"] == key else "cp-pill-idle"

@@ -27,6 +27,49 @@ def create_category(session: Session, name: str, sort_order: int = 0) -> Categor
     return cat
 
 
+def rename_category(session: Session, category_id: int, name: str) -> Category:
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("Укажите название категории")
+    cat = session.get(Category, category_id)
+    if cat is None:
+        raise ValueError("Категория не найдена")
+    clash = session.query(Category).filter(
+        Category.name == name, Category.id != category_id).first()
+    if clash:
+        raise ValueError(f"Категория «{name}» уже есть")
+    cat.name = name
+    session.commit()
+    return cat
+
+
+def delete_category(session: Session, category_id: int,
+                    *, move_to_id: int | None = None) -> int:
+    """Удаляет категорию меню. Возвращает, сколько товаров перенесено.
+
+    Товар обязан лежать в категории (столбец NOT NULL), поэтому удалить
+    непустую категорию можно только указав, куда переселить товары. Иначе
+    отказ: молча удалить вместе с товарами значило бы потерять и продажи по ним.
+    """
+    cat = session.get(Category, category_id)
+    if cat is None:
+        raise ValueError("Категория не найдена")
+    products = session.query(Product).filter(Product.category_id == category_id)
+    count = products.count()
+    if count:
+        if move_to_id is None:
+            raise ValueError(
+                f"В категории {count} товаров — выберите, куда их перенести")
+        if move_to_id == category_id:
+            raise ValueError("Нельзя перенести товары в удаляемую категорию")
+        if session.get(Category, move_to_id) is None:
+            raise ValueError("Категория для переноса не найдена")
+        products.update({Product.category_id: move_to_id}, synchronize_session=False)
+    session.delete(cat)
+    session.commit()
+    return count
+
+
 def create_product(
     session: Session,
     *,

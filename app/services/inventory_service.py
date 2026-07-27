@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
 
-from app.models import Ingredient, StockMove
+from app.models import Ingredient, StockCategory, StockMove
 from app.services import notification_service
 
 
@@ -116,6 +116,62 @@ def update_ingredient(
         _check_low_stock(session, ing)
     session.commit()
     return ing
+
+
+def create_stock_category(session: Session, name: str, sort_order: int = 0) -> StockCategory:
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("Укажите название раздела")
+    if session.query(StockCategory).filter(StockCategory.name == name).first():
+        raise ValueError(f"Раздел «{name}» уже есть")
+    cat = StockCategory(name=name, sort_order=sort_order)
+    session.add(cat)
+    session.commit()
+    return cat
+
+
+def rename_stock_category(session: Session, category_id: int, name: str) -> StockCategory:
+    name = (name or "").strip()
+    if not name:
+        raise ValueError("Укажите название раздела")
+    cat = session.get(StockCategory, category_id)
+    if cat is None:
+        raise ValueError("Раздел не найден")
+    clash = session.query(StockCategory).filter(
+        StockCategory.name == name, StockCategory.id != category_id).first()
+    if clash:
+        raise ValueError(f"Раздел «{name}» уже есть")
+    cat.name = name
+    session.commit()
+    return cat
+
+
+def delete_stock_category(session: Session, category_id: int) -> int:
+    """Удаляет раздел. Позиции не удаляются — переходят в «Без раздела».
+
+    Возвращает, сколько позиций осталось без раздела: удалить склад вместе
+    с разделом значило бы потерять остатки, а это данные учёта.
+    """
+    cat = session.get(StockCategory, category_id)
+    if cat is None:
+        raise ValueError("Раздел не найден")
+    moved = session.query(Ingredient).filter(Ingredient.category_id == category_id).count()
+    session.query(Ingredient).filter(Ingredient.category_id == category_id).update(
+        {Ingredient.category_id: None}, synchronize_session=False)
+    session.delete(cat)
+    session.commit()
+    return moved
+
+
+def set_ingredient_category(session: Session, ingredient_id: int,
+                            category_id: int | None) -> None:
+    ing = session.get(Ingredient, ingredient_id)
+    if ing is None:
+        raise ValueError(f"Позиция склада {ingredient_id} не найдена")
+    if category_id is not None and session.get(StockCategory, category_id) is None:
+        raise ValueError("Раздел не найден")
+    ing.category_id = category_id
+    session.commit()
 
 
 def set_ingredient_active(session: Session, ingredient_id: int, active: bool) -> None:

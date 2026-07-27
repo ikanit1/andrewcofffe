@@ -3,7 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.db import SessionLocal
-from app.models import Ingredient, Product, RecipeItem
+from app.models import Ingredient, Product, RecipeItem, StockCategory
 from app.services import inventory_service as inv
 from app.ui.design import numpad
 from app.ui.layout import admin_header
@@ -21,8 +21,131 @@ def admin_stock_page() -> None:
     with ui.row().classes("gap-2"):
         ui.button("Приход товара", icon="local_shipping",
                   on_click=lambda: ui.navigate.to("/stock/purchase"))
+        ui.button("Разделы склада", icon="folder",
+                  on_click=lambda: _categories_dialog()).props("outline")
 
     ing_container = ui.column().classes("w-full max-w-3xl gap-1")
+
+    def _categories_dialog() -> None:
+        """Разделы склада: добавить, переименовать, удалить."""
+        with ui.dialog() as dlg, ui.card().classes("gap-3 w-full max-w-md"):
+            ui.label("Разделы склада").classes("text-lg font-bold")
+            body = ui.column().classes("w-full gap-1")
+
+            def redraw() -> None:
+                body.clear()
+                with body, SessionLocal() as s:
+                    cats = s.scalars(select(StockCategory)
+                                     .order_by(StockCategory.sort_order,
+                                               StockCategory.name)).all()
+                    if not cats:
+                        ui.label("Разделов пока нет — позиции лежат общим списком") \
+                            .classes("text-sm").style("color: var(--text-secondary)")
+                    for c in cats:
+                        n = s.query(Ingredient).filter(
+                            Ingredient.category_id == c.id).count()
+                        with ui.row().classes("items-center gap-2 w-full no-wrap"):
+                            ui.label(c.name).classes("flex-1 font-medium")
+                            ui.label(f"{n}").classes("text-sm") \
+                                .style("color: var(--text-secondary)")
+                            ui.button(icon="edit",
+                                      on_click=lambda c=c: _rename_cat(c.id, c.name)) \
+                                .props("flat dense")
+                            ui.button(icon="delete",
+                                      on_click=lambda c=c, n=n: _delete_cat(c.id, c.name, n)) \
+                                .props("flat dense color=negative")
+
+            new_name = ui.input("Новый раздел").classes("w-full")
+
+            def add() -> None:
+                try:
+                    with SessionLocal() as s:
+                        inv.create_stock_category(s, new_name.value)
+                except ValueError as e:
+                    ui.notify(str(e), color="red")
+                    return
+                new_name.value = ""
+                redraw()
+                refresh_ingredients()
+
+            new_name.on("keydown.enter", lambda _: add())
+            with ui.row().classes("gap-2"):
+                ui.button("Добавить", icon="add", on_click=add)
+                ui.button("Закрыть", on_click=dlg.close).props("flat")
+            redraw()
+        dlg.open()
+
+    def _rename_cat(cat_id: int, name: str) -> None:
+        with ui.dialog() as dlg, ui.card().classes("gap-3 min-w-80"):
+            ui.label(f"Раздел «{name}»").classes("text-lg font-bold")
+            field = ui.input("Название", value=name).classes("w-full")
+
+            def confirm() -> None:
+                try:
+                    with SessionLocal() as s:
+                        inv.rename_stock_category(s, cat_id, field.value)
+                except ValueError as e:
+                    ui.notify(str(e), color="red")
+                    return
+                dlg.close()
+                ui.notify("Переименовано", color="green")
+                refresh_ingredients()
+
+            with ui.row().classes("gap-2"):
+                ui.button("Сохранить", on_click=confirm)
+                ui.button("Отмена", on_click=dlg.close).props("flat")
+        dlg.open()
+
+    def _delete_cat(cat_id: int, name: str, count: int) -> None:
+        with ui.dialog() as dlg, ui.card().classes("gap-3 min-w-80"):
+            ui.label(f"Удалить раздел «{name}»?").classes("text-lg font-bold")
+            if count:
+                ui.label(f"{count} позиц. перейдут в «Без раздела». Сами позиции "
+                         "и остатки не удаляются.").classes("text-sm") \
+                    .style("color: var(--text-secondary)")
+            else:
+                ui.label("Раздел пустой.").classes("text-sm") \
+                    .style("color: var(--text-secondary)")
+
+            def confirm() -> None:
+                try:
+                    with SessionLocal() as s:
+                        moved = inv.delete_stock_category(s, cat_id)
+                except ValueError as e:
+                    ui.notify(str(e), color="red")
+                    return
+                dlg.close()
+                ui.notify(f"Раздел удалён, позиций без раздела: {moved}", color="green")
+                refresh_ingredients()
+
+            with ui.row().classes("gap-2"):
+                ui.button("Удалить", on_click=confirm, color="negative")
+                ui.button("Отмена", on_click=dlg.close).props("flat")
+        dlg.open()
+
+    def _move_dialog(ing_id: int, name: str, current_id: int | None) -> None:
+        with ui.dialog() as dlg, ui.card().classes("gap-3 min-w-80"):
+            ui.label(f"Раздел для «{name}»").classes("text-lg font-bold")
+            with SessionLocal() as s:
+                opts = {c.id: c.name for c in s.scalars(
+                    select(StockCategory).order_by(StockCategory.name)).all()}
+            opts[0] = "— без раздела —"
+            sel = ui.select(opts, value=current_id or 0, label="Раздел").classes("w-full")
+
+            def confirm() -> None:
+                try:
+                    with SessionLocal() as s:
+                        inv.set_ingredient_category(s, ing_id, sel.value or None)
+                except ValueError as e:
+                    ui.notify(str(e), color="red")
+                    return
+                dlg.close()
+                refresh_ingredients()
+
+            with ui.row().classes("gap-2"):
+                ui.button("Сохранить", on_click=confirm)
+                ui.button("Отмена", on_click=dlg.close).props("flat")
+        dlg.open()
 
     def refresh_ingredients() -> None:
         ing_container.clear()
@@ -33,6 +156,30 @@ def admin_stock_page() -> None:
             if not rows:
                 ui.label("Позиций склада пока нет").style("color: var(--text-secondary)")
                 return
+            cats = {c.id: c.name for c in session.scalars(
+                select(StockCategory).order_by(StockCategory.sort_order,
+                                               StockCategory.name)).all()}
+            # Группируем по разделам; «Без раздела» показываем последним
+            groups: dict = {cid: [] for cid in cats}
+            groups[None] = []
+            for i in rows:
+                groups.setdefault(i.category_id if i.category_id in cats else None,
+                                  []).append(i)
+            order = [(cid, cats[cid]) for cid in cats] + [(None, "Без раздела")]
+
+            for cid, cname in order:
+                items = groups.get(cid) or []
+                if not items:
+                    continue
+                if len(cats) or cid is not None:
+                    with ui.row().classes("w-full items-baseline gap-2 mt-2"):
+                        ui.label(cname).classes("text-xs uppercase tracking-wider") \
+                            .style("color: var(--text-secondary)")
+                        ui.label(f"{len(items)}").classes("text-xs") \
+                            .style("color: var(--text-muted)")
+                _render_items(items)
+
+    def _render_items(rows) -> None:
             for i in rows:
                 low = i.low_stock_threshold > 0 and i.stock_qty < i.low_stock_threshold
                 with ui.card().classes("w-full p-3 gap-2"):
@@ -55,6 +202,10 @@ def admin_stock_page() -> None:
                                   on_click=lambda i=i: _edit_dialog(i.id, i.name, i.unit,
                                                                     i.low_stock_threshold)) \
                             .props("flat dense").tooltip("Название, единица, порог")
+                        ui.button(icon="folder",
+                                  on_click=lambda i=i: _move_dialog(i.id, i.name,
+                                                                    i.category_id)) \
+                            .props("flat dense").tooltip("Перенести в раздел")
                         ui.button(icon="visibility_off",
                                   on_click=lambda i=i: _hide(i.id, i.name)) \
                             .props("flat dense color=negative").tooltip("Убрать из списка")

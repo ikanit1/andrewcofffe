@@ -6,7 +6,8 @@ from app.models.catalog import (
     Product,
     ProductModifierGroup,
 )
-from app.models.inventory import Ingredient, RecipeItem, StockMove
+from app.models.inventory import (Ingredient, RecipeItem, StockCategory,
+                                  StockMove)
 from app.models.kaspi import KaspiSettings
 from app.models.notifications import NotificationOutbox
 from app.models.orders import Order, OrderItem, OrderItemModifier
@@ -33,6 +34,7 @@ __all__ = [
     "Refund",
     "RefundItem",
     "Shift",
+    "StockCategory",
     "StockMove",
     "User",
 ]

@@ -10,6 +10,21 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+class StockCategory(Base):
+    """Раздел склада: «Молочка», «Заморозка», «Снеки».
+
+    Отдельно от категорий меню: на витрине латте лежит в «Кофе», а на складе
+    молоко и зерно — в разных разделах. Одна общая таблица заставила бы держать
+    в меню разделы, которых покупатель никогда не увидит.
+    """
+
+    __tablename__ = "stock_categories"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(unique=True)
+    sort_order: Mapped[int] = mapped_column(default=0)
+
+
 class Ingredient(Base):
     """Складская позиция: ингредиент (г/мл) или штучный товар (шт)."""
 
@@ -18,6 +33,10 @@ class Ingredient(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(unique=True)
     unit: Mapped[str]  # "г" | "мл" | "шт"
+    # Раздел склада. Пустой допустим: позиция может лежать «без раздела», и
+    # удаление раздела не должно тянуть за собой удаление позиций.
+    category_id: Mapped[int | None] = mapped_column(
+        ForeignKey("stock_categories.id", ondelete="SET NULL"), default=None)
     stock_qty: Mapped[int] = mapped_column(default=0)  # кэш остатка в базовых единицах
     avg_cost_tiyn: Mapped[float] = mapped_column(default=0.0)  # тиын за базовую единицу
     low_stock_threshold: Mapped[int] = mapped_column(default=0)  # 0 = отслеживание низкого остатка выключено

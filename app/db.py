@@ -64,6 +64,14 @@ def ensure_schema(engine: Engine) -> None:
             "image_mime": "VARCHAR",
             "has_image": "BOOLEAN NOT NULL DEFAULT 0",
         },
+        "ingredients": {
+            # Без REFERENCES: SQLite не умеет добавлять внешний ключ через
+            # ALTER TABLE, а переливать таблицу с боевыми остатками ради этого
+            # рискованнее, чем жить со ссылкой без ограничения на уровне БД.
+            # Осиротевшие ссылки исключены в коде: удаление раздела сначала
+            # обнуляет category_id у его позиций.
+            "category_id": "INTEGER",
+        },
     }
     with engine.begin() as conn:
         for table, columns in wanted.items():
