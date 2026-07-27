@@ -15,6 +15,26 @@ def _reset_login_throttle():
     throttle.reset_all()
 
 
+@pytest.fixture(autouse=True)
+def _freeze_promo_clock(monkeypatch):
+    """Акции привязаны к часам, а тесты не должны зависеть от времени запуска.
+
+    В фикстурах товар называется «Латте» и стоит 1500 тг. Без заморозки часов
+    прогон между 08:30 и 11:00 подставлял бы акционные 990 тг, и проверки сумм
+    падали бы через раз — ровно в утреннюю смену, когда их запускают чаще всего.
+    Тесты самих акций передают время явным параметром и фикстуру не замечают.
+    """
+    from datetime import datetime
+
+    from app.services import promo
+    from app.timezone import ALMATY
+
+    monkeypatch.setattr(
+        promo, "now_almaty",
+        lambda: datetime(2026, 7, 27, 15, 0, tzinfo=ALMATY),  # день, акции нет
+    )
+
+
 @pytest.fixture()
 def session():
     engine = create_engine("sqlite://")  # in-memory

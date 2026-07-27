@@ -13,6 +13,7 @@ from app.services.catalog_service import list_menu
 from app.services.pricing import PaymentInput
 from app.services import pricing
 from app.services import user_service
+from app.services import promo
 from app.services.login_throttle import LockedOut
 from app.models import Modifier, Order, OrderItem, Payment, User
 from app.ui.design import (BANKNOTES, PAYMENT_ICONS, category_icon, empty_state,
@@ -225,6 +226,20 @@ def sale_page() -> None:
         layout_row = ui.row().classes("items-center gap-1 rounded-full p-1") \
             .style("background: var(--surface-card); border: 1px solid var(--border-subtle)")
 
+    # Плашка акции: цены на витрине уже акционные, и без подписи кассир решит,
+    # что цены сбились. Строится один раз при открытии экрана — акция за смену
+    # закончится, но цену всё равно считает сервер при проведении чека.
+    for pr in promo.active_promos():
+        with ui.row().classes("w-full max-w-3xl items-center gap-2 rounded-xl p-3") \
+                .style("background: var(--status-warning-bg); "
+                       "border: 1px solid var(--status-warning)"):
+            ui.icon("local_offer", size="20px").style("color: var(--status-warning)")
+            ui.label(f"{pr.name} до {pr.end:%H:%M}").classes("font-bold") \
+                .style("color: var(--status-warning)")
+            ui.label(f"капучино, латте, флэт-уайт — {pr.price_tiyn / 100:.0f} тг "
+                     f"за 0.3 л").classes("text-sm") \
+                .style("color: var(--text-secondary)")
+
     sale_row = ui.row().classes("w-full gap-4 items-start no-wrap")
     with sale_row:
         products_col = ui.column().classes("flex-1 min-w-0 gap-3")
@@ -256,7 +271,7 @@ def sale_page() -> None:
             groups = ms.groups_for_product(session, product.id)
         if not groups:
             cart.append({"product_id": product.id, "name": product.name,
-                         "base_price_tiyn": product.price_tiyn, "qty": 1,
+                         "base_price_tiyn": promo.effective_price_tiyn(product), "qty": 1,
                          "modifier_ids": [], "mod_labels": []})
             render_cart()
             return
@@ -281,7 +296,7 @@ def sale_page() -> None:
                         ui.notify(f"Выберите: {g.name}", color="red")
                         return
                 cart.append({"product_id": product.id, "name": product.name,
-                             "base_price_tiyn": product.price_tiyn, "qty": 1,
+                             "base_price_tiyn": promo.effective_price_tiyn(product), "qty": 1,
                              "modifier_ids": chosen_ids, "mod_labels": labels})
                 dialog.close()
                 render_cart()
@@ -326,7 +341,7 @@ def sale_page() -> None:
             with text_box:
                 ui.label(p.name).classes(
                     f"{'text-2xl' if big else 'text-xl'} font-bold leading-tight")
-                ui.label(f"{p.price_tiyn / 100:.0f} тг") \
+                ui.label(f"{promo.effective_price_tiyn(p) / 100:.0f} тг") \
                     .classes("text-lg").style("color: var(--text-secondary)")
             if qty:
                 ui.label(str(qty)).classes(
@@ -357,7 +372,7 @@ def sale_page() -> None:
                             .style("color: var(--brand-primary); opacity:.35")
             with ui.column().classes("gap-0 flex-1 min-w-0"):
                 ui.label(p.name).classes("text-xl font-bold leading-tight")
-                ui.label(f"{p.price_tiyn / 100:.0f} тг").classes("text-lg") \
+                ui.label(f"{promo.effective_price_tiyn(p) / 100:.0f} тг").classes("text-lg") \
                     .style("color: var(--text-secondary)")
             if qty:
                 ui.label(str(qty)).classes(

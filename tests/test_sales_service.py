@@ -327,3 +327,37 @@ def test_sale_notification_shows_split_payment_methods(session):
     note = session.query(NotificationOutbox).filter_by(kind="sale").one()
     assert "Наличные 500.00 тг" in note.text
     assert "Карта 1000.00 тг" in note.text
+
+
+def _at_almaty(hour: int, minute: int = 0):
+    from datetime import datetime
+
+    from app.timezone import ALMATY
+    return datetime(2026, 7, 27, hour, minute, tzinfo=ALMATY)
+
+
+def test_sale_charges_promo_price_in_the_morning(session, monkeypatch):
+    """Утром «Латте» проводится по акционной цене, а не по базовой из карточки."""
+    from app.services import promo
+
+    cashier, latte, milk, beans, shift = _setup(session)
+    monkeypatch.setattr(promo, "now_almaty", lambda: _at_almaty(9, 0))
+
+    order = sales.create_sale(
+        session, cashier_id=cashier.id, lines=[_line(latte.id)],
+        payments=[PaymentInput("cash", 99000, 99000)],
+    )
+    assert order.total_tiyn == 99000  # 990 тг вместо 1500
+
+
+def test_sale_charges_base_price_after_promo_ends(session, monkeypatch):
+    from app.services import promo
+
+    cashier, latte, milk, beans, shift = _setup(session)
+    monkeypatch.setattr(promo, "now_almaty", lambda: _at_almaty(11, 0))
+
+    order = sales.create_sale(
+        session, cashier_id=cashier.id, lines=[_line(latte.id)],
+        payments=[PaymentInput("cash", 150000, 150000)],
+    )
+    assert order.total_tiyn == 150000

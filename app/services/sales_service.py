@@ -17,7 +17,8 @@ from app.models import (
     RefundItem,
     User,
 )
-from app.services import costing, modifier_service, notification_service, pricing
+from app.services import (costing, modifier_service, notification_service, pricing,
+                          promo)
 from app.services.inventory_service import apply_move
 from app.services.pricing import CartLine, PaymentInput
 from app.services.shift_service import current_open_shift
@@ -137,7 +138,9 @@ def create_sale(
             if group.is_required and not (chosen_ids & {m.id for m in group_mods}):
                 raise ValueError(f"Не выбрана обязательная группа: {group.name}")
         cart_line = CartLine(
-            base_price_tiyn=product.price_tiyn,
+            # Цену с учётом акции считает сервер по своим часам: браузер кассира
+            # мог бы показать акционную цену за минуту до её начала или после конца.
+            base_price_tiyn=promo.effective_price_tiyn(product),
             qty=li.qty,
             unit_cost_tiyn=costing.unit_cost_tiyn(session, product, li.modifier_ids),
             modifier_price_deltas=[m.price_delta_tiyn for m in mods],
