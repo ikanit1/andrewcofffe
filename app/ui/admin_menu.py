@@ -463,14 +463,22 @@ def admin_menu_page() -> None:
                     return
                 with SessionLocal() as s:
                     try:
-                        cs.create_product(s, name=name, category_id=picked["cat"],
-                                          kind=picked["kind"], price_tiyn=round(price * 100))
+                        # Штучному товару сразу заводится позиция склада: без неё
+                        # он продаётся, а остаток молча не уменьшается.
+                        cs.create_product_with_stock(
+                            s, name=name, category_id=picked["cat"],
+                            kind=picked["kind"], price_tiyn=round(price * 100))
                     except (ValueError, IntegrityError) as e:
                         s.rollback()
                         error_label.set_text(str(e))
                         return
                 dlg.close()
-                ui.notify(f"«{name}» добавлен в меню", color="green")
+                if picked["kind"] == "retail":
+                    ui.notify(f"«{name}» добавлен, позиция склада заведена "
+                              "(остаток 0 — сделайте приход)", color="green")
+                else:
+                    ui.notify(f"«{name}» добавлен. Заполните тех-карту в разделе "
+                              "«Склад», иначе списания не будет", color="orange")
                 state["cat"] = str(picked["cat"])
                 refresh()
 

@@ -94,3 +94,69 @@ def test_list_menu_admin_only_lists_active_categories(session):
     menu = cs.list_menu_admin(session)
 
     assert [c.id for c, _ in menu] == [cat.id]
+
+
+def test_new_retail_product_gets_stock_position(session):
+    """Штучный товар без привязки продаётся, но склад молча не списывается —
+    именно так в меню накопились десятки несписывающихся позиций."""
+    from app.models import Ingredient
+
+    cat = cs.create_category(session, "Десерты")
+    p = cs.create_product_with_stock(session, name="Новый торт", category_id=cat.id,
+                                     kind="retail", price_tiyn=100000)
+    assert p.ingredient_id is not None
+    ing = session.get(Ingredient, p.ingredient_id)
+    assert ing.name == "Новый торт"
+    assert ing.unit == "шт"
+    assert ing.stock_qty == 0
+
+
+def test_new_retail_product_reuses_existing_stock_position(session):
+    """Вторая позиция под то же блюдо развела бы остатки по разным счётчикам."""
+    from app.models import Ingredient
+
+    cat = cs.create_category(session, "Десерты")
+    existing = Ingredient(name="Брауни", unit="шт", stock_qty=5)
+    session.add(existing)
+    session.commit()
+
+    p = cs.create_product_with_stock(session, name="  брауни  ", category_id=cat.id,
+                                     kind="retail", price_tiyn=100000)
+
+    assert p.ingredient_id == existing.id
+    assert session.query(Ingredient).count() == 1
+    assert session.get(Ingredient, existing.id).stock_qty == 5  # остаток не сброшен
+
+
+def test_prepared_product_gets_no_stock_position(session):
+    """Латте списывает молоко и зерно по тех-карте, а не «одну штуку латте»."""
+    from app.models import Ingredient
+
+    cat = cs.create_category(session, "Кофе")
+    p = cs.create_product_with_stock(session, name="Латте", category_id=cat.id,
+                                     kind="prepared", price_tiyn=110000)
+    assert p.ingredient_id is None
+    assert session.query(Ingredient).count() == 0
+
+
+def test_new_retail_product_deducts_stock_on_sale(session):
+    """Сквозная проверка: создать как в админке, принять товар, продать."""
+    from app.models import Ingredient, User
+    from app.services import inventory_service as inv
+    from app.services import sales_service as sales
+    from app.services import shift_service as ss
+    from app.services.pricing import PaymentInput
+
+    u = User(telegram_id=1, name="Кассир", role="cashier", discount_limit_percent=0)
+    session.add(u)
+    cat = cs.create_category(session, "Десерты")
+    p = cs.create_product_with_stock(session, name="Новый торт", category_id=cat.id,
+                                     kind="retail", price_tiyn=100000)
+    inv.receive_purchase(session, p.ingredient_id, qty=10, total_cost_tiyn=50000)
+    ss.open_shift(session, cashier_id=u.id, opening_cash_tiyn=0)
+
+    sales.create_sale(session, cashier_id=u.id,
+                      lines=[sales.SaleLineInput(product_id=p.id, qty=3)],
+                      payments=[PaymentInput("cash", 300000, 300000)])
+
+    assert session.get(Ingredient, p.ingredient_id).stock_qty == 7

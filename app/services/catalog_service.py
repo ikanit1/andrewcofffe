@@ -96,6 +96,40 @@ def create_product(
     return p
 
 
+def create_product_with_stock(
+    session: Session, *, name: str, category_id: int, kind: str, price_tiyn: int,
+    stock_category_id: int | None = None,
+) -> Product:
+    """Создаёт товар и для штучного сразу заводит позицию склада с тем же именем.
+
+    Без привязки штучный товар продаётся, но остаток не уменьшается, и делает
+    это молча — именно так в меню накопились десятки несписывающихся позиций.
+    Поэтому связка создаётся здесь, а не оставляется на память владельца.
+
+    Если позиция с таким именем уже есть, берём её, а не заводим вторую: две
+    позиции под одно блюдо разводят остатки по разным счётчикам.
+    """
+    from app.models import Ingredient  # локально: склад не нужен остальным функциям
+
+    ingredient_id = None
+    if kind == "retail":
+        clean = (name or "").strip()
+        # Сравнение регистра делаем в Python, а не через SQL lower(): встроенный
+        # lower() в SQLite работает только с латиницей, и «Брауни» не совпал бы
+        # с «брауни» — завелась бы вторая позиция под то же блюдо.
+        target = clean.casefold()
+        ing = next((i for i in session.query(Ingredient).all()
+                    if i.name.strip().casefold() == target), None)
+        if ing is None:
+            ing = Ingredient(name=clean, unit="шт", stock_qty=0, avg_cost_tiyn=0.0,
+                             low_stock_threshold=0, category_id=stock_category_id)
+            session.add(ing)
+            session.flush()
+        ingredient_id = ing.id
+    return create_product(session, name=name, category_id=category_id, kind=kind,
+                          price_tiyn=price_tiyn, ingredient_id=ingredient_id)
+
+
 def update_product(session: Session, product_id: int, **fields) -> Product:
     p = session.get(Product, product_id)
     if p is None:
