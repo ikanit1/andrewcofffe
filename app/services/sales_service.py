@@ -43,13 +43,39 @@ def _next_order_number(session: Session, shift_id: int) -> int:
     return (last or 0) + 1
 
 
-def _sale_notification_text(order: Order, resolved, payments: list[PaymentInput],
-                            cashier: User) -> str:
-    """Текст уведомления о продаже: состав чека, сумма, способ оплаты, время."""
-    items = ", ".join(
-        f"{product.name}"
+def _stock_note(session: Session, product: Product) -> str:
+    """Остаток по товару для уведомления, если он вообще считается.
+
+    Три разных случая, и молчать о них нельзя — именно из-за молчания долго
+    не замечали, что часть товаров продаётся, а склад не меняется:
+      • штучный с привязкой — показываем остаток и предупреждаем про минус;
+      • по тех-карте — остаток не одна цифра, отсылаем к складу;
+      • ничего не настроено — прямо говорим, что списания не было.
+    """
+    if product.kind == "retail":
+        if product.ingredient_id is None:
+            return " ⚠ склад не списан: товар не привязан к складу"
+        ing = session.get(Ingredient, product.ingredient_id)
+        if ing is None:
+            return " ⚠ склад не списан: позиция склада не найдена"
+        if ing.stock_qty < 0:
+            return f" ⚠ остаток {ing.stock_qty} {ing.unit} — продано больше, чем было"
+        return f" (остаток {ing.stock_qty} {ing.unit})"
+    has_recipe = session.query(RecipeItem).filter(
+        RecipeItem.product_id == product.id).count() > 0
+    if not has_recipe:
+        return " ⚠ склад не списан: нет тех-карты"
+    return ""
+
+
+def _sale_notification_text(session: Session, order: Order, resolved,
+                            payments: list[PaymentInput], cashier: User) -> str:
+    """Текст уведомления о продаже: состав чека, остатки, сумма, способ, время."""
+    items = "\n".join(
+        f"• {product.name}"
         + (f" ({', '.join(m.name for m in mods)})" if mods else "")
         + f" ×{li.qty}"
+        + _stock_note(session, product)
         for li, product, mods, _ in resolved
     )
     if len(payments) == 1:
@@ -191,7 +217,9 @@ def create_sale(
 
         notification_service.enqueue(
             session, kind="sale",
-            text=_sale_notification_text(order, resolved, payments, cashier),
+            # Уведомление собирается ПОСЛЕ списания склада: в него попадают
+            # уже уменьшенные остатки, а не те, что были до чека.
+            text=_sale_notification_text(session, order, resolved, payments, cashier),
         )
 
         session.commit()
