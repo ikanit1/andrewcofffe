@@ -108,12 +108,27 @@ def create_product_with_stock(
 
     Если позиция с таким именем уже есть, берём её, а не заводим вторую: две
     позиции под одно блюдо разводят остатки по разным счётчикам.
+
+    Раздел склада по умолчанию повторяет категорию меню и заводится при
+    необходимости. Иначе новая позиция падает в «Без раздела» в самый низ
+    длинного списка, и владелец решает, что она вообще не создалась.
     """
-    from app.models import Ingredient  # локально: склад не нужен остальным функциям
+    from app.models import Ingredient, StockCategory  # склад не нужен остальным
 
     ingredient_id = None
     if kind == "retail":
         clean = (name or "").strip()
+        if stock_category_id is None:
+            cat = session.get(Category, category_id)
+            if cat is not None:
+                target = cat.name.strip().casefold()
+                sc = next((c for c in session.query(StockCategory).all()
+                           if c.name.strip().casefold() == target), None)
+                if sc is None:
+                    sc = StockCategory(name=cat.name.strip(), sort_order=cat.sort_order)
+                    session.add(sc)
+                    session.flush()
+                stock_category_id = sc.id
         # Сравнение регистра делаем в Python, а не через SQL lower(): встроенный
         # lower() в SQLite работает только с латиницей, и «Брауни» не совпал бы
         # с «брауни» — завелась бы вторая позиция под то же блюдо.

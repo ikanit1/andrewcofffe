@@ -31,9 +31,14 @@ def main() -> None:
                 wanted.setdefault(p.ingredient_id, name)
 
         needed = sorted(set(wanted.values()))
-        existing = {c.name: c for c in s.query(StockCategory).all()}
+        # Ключ нормализованный: в базе встречаются «Мороженое» и «Мороженое »
+        # с висячим пробелом, и поиск по точному имени пытался завести дубль.
+        existing = {c.name.strip().casefold(): c for c in s.query(StockCategory).all()}
 
-        created = [n for n in needed if n not in existing]
+        def key(n: str) -> str:
+            return n.strip().casefold()
+
+        created = [n for n in needed if key(n) not in existing]
         by_section: dict[str, list[str]] = {}
         moved = 0
 
@@ -43,10 +48,11 @@ def main() -> None:
                 continue
             by_section.setdefault(target, []).append(ing.name.strip())
             if apply:
-                cat = existing.get(target)
+                cat = existing.get(key(target))
                 if cat is None:
-                    cat = inv.create_stock_category(s, target, sort_order=needed.index(target))
-                    existing[target] = cat
+                    cat = inv.create_stock_category(s, target.strip(),
+                                                    sort_order=needed.index(target))
+                    existing[key(target)] = cat
                 if ing.category_id != cat.id:
                     ing.category_id = cat.id
                     moved += 1

@@ -160,3 +160,35 @@ def test_new_retail_product_deducts_stock_on_sale(session):
                       payments=[PaymentInput("cash", 300000, 300000)])
 
     assert session.get(Ingredient, p.ingredient_id).stock_qty == 7
+
+
+def test_new_retail_product_lands_in_matching_stock_section(session):
+    """Позиция должна попасть в раздел склада с именем категории меню.
+
+    Иначе она падает в «Без раздела» в самый низ длинного списка, и владелец
+    решает, что товар на складе не появился вовсе.
+    """
+    from app.models import Ingredient, StockCategory
+
+    cat = cs.create_category(session, "Жвачки")
+    p = cs.create_product_with_stock(session, name="Орбит", category_id=cat.id,
+                                     kind="retail", price_tiyn=30000)
+
+    ing = session.get(Ingredient, p.ingredient_id)
+    assert ing.category_id is not None
+    assert session.get(StockCategory, ing.category_id).name == "Жвачки"
+
+
+def test_existing_stock_section_is_reused_not_duplicated(session):
+    from app.models import Ingredient, StockCategory
+    from app.services import inventory_service as inv
+
+    cat = cs.create_category(session, "Жвачки")
+    inv.create_stock_category(session, "жвачки")  # тот же раздел, другой регистр
+
+    p = cs.create_product_with_stock(session, name="Орбит", category_id=cat.id,
+                                     kind="retail", price_tiyn=30000)
+
+    assert session.query(StockCategory).count() == 1
+    ing = session.get(Ingredient, p.ingredient_id)
+    assert ing.category_id == session.query(StockCategory).one().id
