@@ -24,7 +24,19 @@ def admin_stock_page() -> None:
         ui.button("Разделы склада", icon="folder",
                   on_click=lambda: _categories_dialog()).props("outline")
 
+    # Поиск: на складе десятки позиций, и пролистывать их ради одной — долго.
+    with ui.row().classes("w-full max-w-3xl items-center gap-2 px-3 mt-2 rounded-xl") \
+            .style("background: var(--surface-card); "
+                   "border:1px solid var(--border-subtle); min-height:48px"):
+        ui.icon("search", size="20px").style("color: var(--text-secondary)")
+        search = ui.input(placeholder="Поиск по названию позиции") \
+            .props("borderless dense clearable").classes("flex-1")
+    search.on_value_change(lambda _: refresh_ingredients())
+
     ing_container = ui.column().classes("w-full max-w-3xl gap-1")
+
+    def _query() -> str:
+        return (search.value or "").strip().lower()
 
     def _categories_dialog() -> None:
         """Разделы склада: добавить, переименовать, удалить."""
@@ -156,6 +168,18 @@ def admin_stock_page() -> None:
             if not rows:
                 ui.label("Позиций склада пока нет").style("color: var(--text-secondary)")
                 return
+            query = _query()
+            if query:
+                rows = [i for i in rows if query in i.name.lower()]
+                if not rows:
+                    with ui.column().classes("w-full items-center gap-2 py-10") \
+                            .style("color: var(--text-secondary);"
+                                   "background: var(--surface-card);"
+                                   "border:1px dashed var(--border-default);"
+                                   "border-radius:16px"):
+                        ui.icon("search_off", size="30px")
+                        ui.label(f"Ничего не найдено по «{search.value}»")
+                    return
             cats = {c.id: c.name for c in session.scalars(
                 select(StockCategory).order_by(StockCategory.sort_order,
                                                StockCategory.name)).all()}

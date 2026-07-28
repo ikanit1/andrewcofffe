@@ -252,6 +252,9 @@ def admin_menu_page() -> None:
                     ui.button(icon="undo", color="positive",
                               on_click=lambda pid=p.id, name=p.name: _restore(pid, name)) \
                         .props("flat dense round").tooltip("Вернуть в меню")
+                ui.button(icon="delete", color="negative",
+                          on_click=lambda pid=p.id, name=p.name: _delete_product(pid, name)) \
+                    .props("flat dense round").tooltip("Удалить товар")
 
     def _render_content(menu) -> None:
         content.clear()
@@ -371,6 +374,50 @@ def admin_menu_page() -> None:
         pending.pop(pid, None)
         ui.notify(f"«{name}» убран из меню", color="orange")
         refresh()
+
+    def _delete_product(pid: int, name: str) -> None:
+        """Удаление насовсем. Проданный товар сервис не отдаст — предложим скрыть."""
+        with ui.dialog() as dlg, ui.card().classes("gap-3 min-w-80"):
+            ui.label(f"Удалить «{name}»?").classes("text-lg font-bold")
+            ui.label("Товар исчезнет вместе с тех-картой и привязкой модификаторов. "
+                     "Отменить будет нельзя.").classes("text-sm") \
+                .style("color: var(--text-secondary)")
+
+            def confirm() -> None:
+                try:
+                    with SessionLocal() as s:
+                        cs.delete_product(s, pid)
+                except (ValueError, IntegrityError) as e:
+                    dlg.close()
+                    # Проданный товар удалить нельзя — объясняем и предлагаем скрыть.
+                    _offer_hide_instead(pid, name, str(e))
+                    return
+                pending.pop(pid, None)
+                dlg.close()
+                ui.notify(f"«{name}» удалён", color="green")
+                refresh()
+
+            with ui.row().classes("gap-2"):
+                ui.button("Удалить", on_click=confirm, color="negative").props("no-caps")
+                ui.button("Отмена", on_click=dlg.close).props("flat no-caps")
+        dlg.open()
+
+    def _offer_hide_instead(pid: int, name: str, reason: str) -> None:
+        with ui.dialog() as dlg, ui.card().classes("gap-3 min-w-80"):
+            ui.label("Удалить нельзя").classes("text-lg font-bold")
+            ui.label(reason).classes("text-sm")
+            ui.label("Скрытый товар не показывается на экране продажи, "
+                     "а отчёты за прошлые дни остаются прежними.") \
+                .classes("text-sm").style("color: var(--text-secondary)")
+
+            def hide() -> None:
+                dlg.close()
+                _remove(pid, name)
+
+            with ui.row().classes("gap-2"):
+                ui.button("Убрать из меню", on_click=hide).props("no-caps")
+                ui.button("Отмена", on_click=dlg.close).props("flat no-caps")
+        dlg.open()
 
     def _restore(pid: int, name: str) -> None:
         with SessionLocal() as s:

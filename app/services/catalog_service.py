@@ -1,4 +1,4 @@
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models import Category, Product
@@ -143,6 +143,37 @@ def create_product_with_stock(
         ingredient_id = ing.id
     return create_product(session, name=name, category_id=category_id, kind=kind,
                           price_tiyn=price_tiyn, ingredient_id=ingredient_id)
+
+
+def delete_product(session: Session, product_id: int) -> None:
+    """Удаляет товар вместе с тех-картой и привязкой модификаторов.
+
+    Проданный товар удалить нельзя: строки чеков ссылаются на него, и без этой
+    связи прошлые продажи перестали бы попадать в свою категорию — отчёты за
+    уже закрытые периоды изменились бы задним числом. Такой товар убирают
+    из меню (is_active=False): он исчезает с экрана продажи, а история цела.
+    """
+    from app.models import OrderItem, ProductModifierGroup, RecipeItem
+
+    product = session.get(Product, product_id)
+    if product is None:
+        raise ValueError(f"Товар {product_id} не найден")
+
+    sold = session.scalar(
+        select(func.count()).select_from(OrderItem).where(OrderItem.product_id == product_id)
+    )
+    if sold:
+        raise ValueError(
+            f"«{product.name}» уже продавался ({sold} раз) — удалить нельзя, "
+            "иначе изменятся отчёты за прошлые периоды. Уберите его из меню."
+        )
+
+    session.query(RecipeItem).filter(RecipeItem.product_id == product_id).delete(
+        synchronize_session=False)
+    session.query(ProductModifierGroup).filter(
+        ProductModifierGroup.product_id == product_id).delete(synchronize_session=False)
+    session.delete(product)
+    session.commit()
 
 
 def update_product(session: Session, product_id: int, **fields) -> Product:

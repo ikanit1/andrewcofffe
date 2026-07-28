@@ -67,6 +67,70 @@ def daily_summary_text(session: Session, *, now: datetime | None = None) -> str:
     return "\n".join(lines).rstrip()
 
 
+def stock_remains_text(session: Session) -> list[str]:
+    """Остатки склада по разделам. Позиции ниже порога помечены «!».
+
+    Владельцу нужно видеть не только выручку, но и с чем кассир оставил точку:
+    закупку делают вечером, а не утром перед открытием.
+    """
+    from app.models import Ingredient, StockCategory
+
+    rows = session.scalars(
+        select(Ingredient).where(Ingredient.is_active).order_by(Ingredient.name)
+    ).all()
+    if not rows:
+        return []
+    sections = {c.id: c.name for c in session.scalars(
+        select(StockCategory).order_by(StockCategory.sort_order, StockCategory.name)).all()}
+
+    grouped: dict[int | None, list] = {}
+    for ing in rows:
+        key = ing.category_id if ing.category_id in sections else None
+        grouped.setdefault(key, []).append(ing)
+
+    lines = ["", "Остатки склада:"]
+    order = [(cid, sections[cid]) for cid in sections if cid in grouped]
+    if None in grouped:
+        order.append((None, "Без раздела"))
+    for cid, name in order:
+        lines.append(f"  {name}")
+        for ing in grouped[cid]:
+            low = ing.low_stock_threshold > 0 and ing.stock_qty < ing.low_stock_threshold
+            mark = " !" if low else ""
+            lines.append(f"    {ing.name}: {ing.stock_qty} {ing.unit}{mark}")
+    if any(i.low_stock_threshold > 0 and i.stock_qty < i.low_stock_threshold for i in rows):
+        lines.append("  ! — ниже порога, пора закупать")
+    return lines
+
+
+def shift_close_summary_text(session: Session, shift, *, now: datetime | None = None) -> str:
+    """Сводка после закрытия смены: итоги дня, сверка кассы и остатки склада."""
+    from app.models import User
+
+    cashier = session.get(User, shift.cashier_id)
+    diff = (shift.counted_cash_tiyn or 0) - (shift.expected_cash_tiyn or 0)
+
+    lines = [daily_summary_text(session, now=now), ""]
+    lines.append(f"Смена №{shift.id} закрыта"
+                 + (f", кассир: {cashier.name}" if cashier else ""))
+    lines.append(f"  Ожидалось в кассе: {_tg(shift.expected_cash_tiyn or 0)}")
+    lines.append(f"  По факту: {_tg(shift.counted_cash_tiyn or 0)}")
+    lines.append(f"  Расхождение: {diff / 100:+.2f} тг"
+                 + ("" if diff == 0 else "  ⚠"))
+    lines.extend(stock_remains_text(session))
+    return "\n".join(lines).rstrip()
+
+
+def enqueue_shift_close_summary(session: Session, shift, *, now: datetime | None = None):
+    """Кладёт сводку в очередь. Не коммитит — участвует в транзакции закрытия смены."""
+    from app.services import notification_service
+
+    return notification_service.enqueue(
+        session, kind="shift_summary",
+        text=shift_close_summary_text(session, shift, now=now),
+    )
+
+
 def enqueue_daily_summary(session: Session, *, now: datetime | None = None):
     """Кладёт сводку в общую очередь уведомлений — с ретраями и рассылкой всем админам."""
     from app.services import notification_service

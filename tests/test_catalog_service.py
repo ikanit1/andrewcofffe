@@ -192,3 +192,63 @@ def test_existing_stock_section_is_reused_not_duplicated(session):
     assert session.query(StockCategory).count() == 1
     ing = session.get(Ingredient, p.ingredient_id)
     assert ing.category_id == session.query(StockCategory).one().id
+
+
+def test_delete_product_removes_it_with_recipe_and_modifier_links(session):
+    from app.models import ModifierGroup, ProductModifierGroup, RecipeItem, Ingredient
+
+    cat = cs.create_category(session, "Кофе")
+    ing = Ingredient(name="Молоко", unit="мл")
+    grp = ModifierGroup(name="Объём", is_required=True)
+    session.add_all([ing, grp]); session.flush()
+    p = cs.create_product(session, name="Латте", category_id=cat.id,
+                          kind="prepared", price_tiyn=110000)
+    session.add_all([
+        RecipeItem(product_id=p.id, ingredient_id=ing.id, qty=200),
+        ProductModifierGroup(product_id=p.id, group_id=grp.id),
+    ])
+    session.commit()
+
+    cs.delete_product(session, p.id)
+
+    assert session.get(Product, p.id) is None
+    assert session.query(RecipeItem).filter_by(product_id=p.id).count() == 0
+    assert session.query(ProductModifierGroup).filter_by(product_id=p.id).count() == 0
+
+
+def test_delete_product_refuses_when_it_was_sold(session):
+    """Удалить проданный товар нельзя: строки чеков ссылаются на него, и без
+    этой связи прошлые продажи перестали бы попадать в свою категорию —
+    отчёты за закрытые периоды задним числом изменились бы."""
+    from app.models import Order, OrderItem, Shift, User
+
+    cat = cs.create_category(session, "Кофе")
+    p = cs.create_product(session, name="Латте", category_id=cat.id,
+                          kind="prepared", price_tiyn=110000)
+    u = User(telegram_id=1, name="Кассир", role="cashier")
+    session.add(u); session.flush()
+    sh = Shift(cashier_id=u.id, status="closed", opening_cash_tiyn=0)
+    session.add(sh); session.flush()
+    o = Order(shift_id=sh.id, number=1, status="paid", subtotal_tiyn=110000,
+              total_tiyn=110000)
+    session.add(o); session.flush()
+    session.add(OrderItem(order_id=o.id, product_id=p.id, name="Латте",
+                          unit_price_tiyn=110000, qty=1, line_total_tiyn=110000))
+    session.commit()
+
+    with pytest.raises(ValueError, match="продавался"):
+        cs.delete_product(session, p.id)
+    assert session.get(Product, p.id) is not None
+
+
+def test_delete_product_reports_unknown_id(session):
+    with pytest.raises(ValueError):
+        cs.delete_product(session, 4242)
+
+
+def test_product_can_be_deleted_regardless_of_kind(session):
+    cat = cs.create_category(session, "Снеки")
+    retail = cs.create_product(session, name="Кола", category_id=cat.id,
+                               kind="retail", price_tiyn=50000)
+    cs.delete_product(session, retail.id)
+    assert session.get(Product, retail.id) is None

@@ -1,3 +1,5 @@
+import logging
+
 from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
@@ -5,6 +7,8 @@ from app.models import CashCollection, Order, Payment, Refund, Shift, User
 from app.models.inventory import utcnow
 from app.services import notification_service
 from app.timezone import to_almaty
+
+logger = logging.getLogger(__name__)
 
 
 def current_open_shift(session: Session) -> Shift | None:
@@ -125,5 +129,14 @@ def close_shift(session: Session, *, shift_id: int, counted_cash_tiyn: int) -> S
             f"кассир: {cashier.name}"
         ),
     )
+    # Развёрнутая сводка отдельным сообщением: короткое уведомление читают
+    # на ходу, а итоги дня с остатками — когда решают, что закупать к утру.
+    # Сбой её сборки не должен мешать закрыть смену: деньги уже пересчитаны.
+    try:
+        from app.services.daily_summary import enqueue_shift_close_summary
+
+        enqueue_shift_close_summary(session, sh)
+    except Exception:
+        logger.exception("Не удалось подготовить сводку по закрытию смены %s", sh.id)
     session.commit()
     return sh
