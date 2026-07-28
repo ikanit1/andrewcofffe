@@ -38,9 +38,37 @@ def rename_category(session: Session, category_id: int, name: str) -> Category:
         Category.name == name, Category.id != category_id).first()
     if clash:
         raise ValueError(f"Категория «{name}» уже есть")
+    old_name = cat.name
     cat.name = name
+    _rename_matching_stock_category(session, old_name, name)
     session.commit()
     return cat
+
+
+def _rename_matching_stock_category(session: Session, old_name: str, new_name: str) -> None:
+    """Тянет за категорией меню одноимённый раздел склада.
+
+    Разделы склада заводятся по именам категорий меню (см. create_product_with_stock).
+    Без этого переименование их разводит: новые товары идут в раздел с новым
+    именем, а прежние остаются в разделе со старым, и на складе появляются
+    два раздела с одним смыслом.
+    """
+    from app.models import Ingredient, StockCategory
+
+    source = next((c for c in session.query(StockCategory).all()
+                   if c.name.strip().lower() == old_name.strip().lower()), None)
+    if source is None:
+        return
+    target = next((c for c in session.query(StockCategory).all()
+                   if c.id != source.id
+                   and c.name.strip().lower() == new_name.strip().lower()), None)
+    if target is None:
+        source.name = new_name
+        return
+    # Раздел с новым именем уже есть — сводим позиции в него, дубль убираем.
+    session.query(Ingredient).filter(Ingredient.category_id == source.id).update(
+        {Ingredient.category_id: target.id}, synchronize_session=False)
+    session.delete(source)
 
 
 def delete_category(session: Session, category_id: int,

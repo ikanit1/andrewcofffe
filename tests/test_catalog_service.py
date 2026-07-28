@@ -252,3 +252,48 @@ def test_product_can_be_deleted_regardless_of_kind(session):
                                kind="retail", price_tiyn=50000)
     cs.delete_product(session, retail.id)
     assert session.get(Product, retail.id) is None
+
+
+def test_rename_category_renames_matching_stock_section(session):
+    """Раздел склада назван по категории меню. Если переименовать категорию,
+    а раздел оставить, они разойдутся навсегда: новые товары пойдут в раздел
+    с новым именем, старые останутся в разделе со старым."""
+    from app.models import StockCategory
+
+    cat = cs.create_category(session, "Десерты")
+    cs.create_product_with_stock(session, name="Брауни", category_id=cat.id,
+                                 kind="retail", price_tiyn=90000)
+
+    cs.rename_category(session, cat.id, "Выпечка")
+
+    names = [c.name for c in session.query(StockCategory).all()]
+    assert names == ["Выпечка"]
+
+
+def test_rename_category_merges_when_stock_section_already_exists(session):
+    """Раздел с новым именем уже есть — позиции переезжают в него,
+    а опустевший дубль убирается: двух разделов с одним смыслом быть не должно."""
+    from app.models import Ingredient, StockCategory
+
+    cat = cs.create_category(session, "Десерты")
+    cs.create_product_with_stock(session, name="Брауни", category_id=cat.id,
+                                 kind="retail", price_tiyn=90000)
+    target = StockCategory(name="Выпечка")
+    session.add(target)
+    session.commit()
+
+    cs.rename_category(session, cat.id, "Выпечка")
+
+    sections = session.query(StockCategory).all()
+    assert [c.name for c in sections] == ["Выпечка"]
+    brownie = session.query(Ingredient).filter_by(name="Брауни").one()
+    assert brownie.category_id == sections[0].id
+
+
+def test_rename_category_without_stock_section_is_harmless(session):
+    from app.models import StockCategory
+
+    cat = cs.create_category(session, "Кофе")
+    cs.rename_category(session, cat.id, "Напитки")
+    assert session.query(StockCategory).count() == 0
+    assert session.get(Category, cat.id).name == "Напитки"
