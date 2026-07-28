@@ -10,6 +10,8 @@ __pycache__/
 *.env
 .env.*
 !.env.example
+# Метка «перезапусти меня» между приложением и скриптом запуска — не код.
+.restart
 .nicegui/
 backups/
 logs/

@@ -351,7 +351,22 @@ Write-Host "Остановить — Ctrl+C в этом окне." -ForegroundCo
 Write-Host ""
 Write-Host "--- журнал сервера ---" -ForegroundColor DarkGray
 
-& $venvPy -m app.main
+# Приложение просит перезапуск, оставляя файл .restart, и выходит. Цикл поднимает
+# его снова — так обновление из админки доводится до конца без участия человека.
+# Без метки цикл был бы безусловным, и Ctrl+C перестал бы останавливать кассу.
+$marker = Join-Path $root ".restart"
+Remove-Item $marker -Force -ErrorAction SilentlyContinue   # вдруг остался с прошлого раза
+$env:COFFEEPOS_SUPERVISED = "1"
+
+while ($true) {
+    & $venvPy -m app.main
+
+    if (-not (Test-Path $marker)) { break }
+    Remove-Item $marker -Force -ErrorAction SilentlyContinue
+    Write-Host ""
+    Write-Host "Обновление применено — поднимаю кассу заново…" -ForegroundColor Cyan
+    Start-Sleep -Seconds 2
+}
 
 Write-Host ""
 Write-Host "Сервер остановлен." -ForegroundColor Cyan

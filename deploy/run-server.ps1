@@ -43,7 +43,10 @@ try {
 # Только при нём кнопка обновления в админке может себя перезапустить.
 $env:COFFEEPOS_SUPERVISED = "1"
 
+$marker = Join-Path $root ".restart"
+
 while ($true) {
+    Remove-Item $marker -Force -ErrorAction SilentlyContinue
     Write-Log "запуск сервера"
 
     # Перенаправление делает cmd, а не PowerShell. Причина: uvicorn пишет журнал

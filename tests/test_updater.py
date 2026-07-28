@@ -110,3 +110,40 @@ def test_backs_up_database_before_pulling(session, tmp_path, monkeypatch):
     copies = list((tmp_path / "backups").glob("pos-before-update-*.db"))
     assert len(copies) == 1
     assert copies[0].read_bytes() == db.read_bytes()
+
+
+def test_request_restart_leaves_marker_for_launcher(tmp_path):
+    """Маркер отличает выход ради обновления от Ctrl+C.
+
+    Без него start.ps1 пришлось бы зациклить безусловно, и остановить кассу
+    с клавиатуры стало бы нельзя: цикл поднимал бы сервер снова.
+    """
+    updater.request_restart(root=tmp_path)
+    assert (tmp_path / updater.RESTART_MARKER_NAME).exists()
+
+
+def test_consume_restart_marker_reports_and_removes_it(tmp_path):
+    updater.request_restart(root=tmp_path)
+    assert updater.consume_restart_marker(root=tmp_path) is True
+    assert not (tmp_path / updater.RESTART_MARKER_NAME).exists()
+
+
+def test_consume_restart_marker_is_false_without_it(tmp_path):
+    assert updater.consume_restart_marker(root=tmp_path) is False
+
+
+def test_restart_marker_is_not_left_over_between_runs(tmp_path):
+    """Забытый маркер заставил бы кассу перезапуститься на пустом месте."""
+    updater.request_restart(root=tmp_path)
+    updater.consume_restart_marker(root=tmp_path)
+    assert updater.consume_restart_marker(root=tmp_path) is False
+
+
+def test_supervised_run_schedules_restart_and_marks_it(session, tmp_path, monkeypatch):
+    """Под start.ps1 и под автозапуском одинаково: приложение просит перезапуск само."""
+    monkeypatch.setenv("COFFEEPOS_SUPERVISED", "1")
+    (tmp_path / ".git").mkdir()
+    run = _runner([(0, "ok"), (0, "ok")])
+    res = asyncio.run(updater.apply_update(session, runner=run, root=tmp_path))
+    assert res.ok is True and res.restart_scheduled is True
+    assert "вручную" not in res.message.lower()

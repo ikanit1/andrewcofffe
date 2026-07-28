@@ -104,8 +104,8 @@ def admin_about_page() -> None:
                       on_click=_ask_pin).props("no-caps")
             hint = ("После обновления касса перезапустится сама, страница обновится."
                     if updater.is_supervised() else
-                    "Автоперезапуск не настроен: код обновится, а кассу нужно будет "
-                    "перезапустить вручную через start.ps1.")
+                    "Сервер запущен в обход start.ps1 и install.ps1 — поднять его "
+                    "заново придётся тем же способом, каким запускали.")
             ui.label(hint).classes("text-xs").style("color: var(--text-muted)")
 
         def _ask_pin() -> None:

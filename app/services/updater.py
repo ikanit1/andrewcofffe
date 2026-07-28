@@ -4,11 +4,12 @@
 работой всё равно делается копия базы — если новая версия поменяет схему,
 будет к чему вернуться.
 
-Перезапуск возможен не всегда. deploy/run-server.ps1 держит сервер в цикле
-и поднимает его снова через несколько секунд после выхода — там достаточно
-завершить процесс. При ручном запуске через start.ps1 такого надзора нет,
-и тогда мы честно просим перезапустить кассу руками, а не оставляем
-владельца с погашенным экраном.
+Перезапуск делает не приложение, а запустивший его скрипт: и start.ps1,
+и deploy/run-server.ps1 держат сервер в цикле. Приложение оставляет файл
+.restart и выходит — цикл видит метку и поднимает кассу заново.
+
+Метка нужна, чтобы отличить обновление от Ctrl+C: без неё цикл в start.ps1
+был бы безусловным, и остановить кассу с клавиатуры стало бы нельзя.
 """
 import asyncio
 import logging
@@ -26,6 +27,7 @@ from app.services.shift_service import current_open_shift
 logger = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+RESTART_MARKER_NAME = ".restart"
 _RESTART_DELAY_SECONDS = 1.5
 _COMMAND_TIMEOUT_SECONDS = 180
 
@@ -133,12 +135,35 @@ async def apply_update(session: Session, *, runner=None, root: Path | None = Non
     )
 
 
+def request_restart(root: Path | None = None) -> Path:
+    """Оставляет метку «выхожу ради обновления» для запускающего скрипта.
+
+    Без неё start.ps1 пришлось бы зациклить безусловно, и остановить кассу
+    с клавиатуры стало бы нельзя: цикл поднимал бы сервер после каждого Ctrl+C.
+    По метке скрипт отличает обновление от осознанной остановки.
+    """
+    path = (Path(root) if root is not None else PROJECT_ROOT) / RESTART_MARKER_NAME
+    path.write_text(datetime.now().isoformat(timespec="seconds"), encoding="utf-8")
+    return path
+
+
+def consume_restart_marker(root: Path | None = None) -> bool:
+    """True — метка была и удалена. Забытая метка перезапустила бы кассу впустую."""
+    path = (Path(root) if root is not None else PROJECT_ROOT) / RESTART_MARKER_NAME
+    if not path.exists():
+        return False
+    path.unlink(missing_ok=True)
+    return True
+
+
 def schedule_restart() -> None:
-    """Выходит из процесса, чтобы run-server.ps1 поднял его заново.
+    """Просит перезапуск и выходит из процесса — скрипт запуска поднимет заново.
 
     С задержкой: иначе ответ на текущий запрос не успеет уйти в браузер,
     и владелец увидит оборванное соединение вместо сообщения об успехе.
     """
+    request_restart()
+
     async def _bye() -> None:
         await asyncio.sleep(_RESTART_DELAY_SECONDS)
         logger.info("Перезапуск после обновления")
