@@ -100,6 +100,203 @@ class ShiftsReport:
 
 
 @dataclass
+class DayRow:
+    day: date
+    revenue_tiyn: int
+    refunds_tiyn: int
+    cogs_tiyn: int
+    orders_count: int
+    items_count: int
+
+
+@dataclass
+class HourRow:
+    hour: int
+    revenue_tiyn: int
+    orders_count: int
+
+
+@dataclass
+class Summary:
+    gross_tiyn: int
+    refunds_tiyn: int
+    net_tiyn: int
+    cogs_tiyn: int
+    margin_tiyn: int
+    margin_pct: float
+    orders_count: int
+    items_count: int
+    avg_check_tiyn: int
+
+
+@dataclass
+class ReceiptLine:
+    name: str
+    qty: int
+    unit_price_tiyn: int
+    line_total_tiyn: int
+
+
+@dataclass
+class Receipt:
+    number: int
+    at: datetime          # уже в Алматы — экран показывает местное время
+    total_tiyn: int
+    method: str           # способ с наибольшей суммой; при сплите остальные в methods
+    methods: tuple[str, ...]
+    lines: tuple[ReceiptLine, ...]
+    refunded_tiyn: int
+    refund_reason: str
+
+
+def _day_bounds_utc(day: date) -> tuple[datetime, datetime]:
+    start = datetime.combine(day, time.min, tzinfo=ALMATY)
+    return start.astimezone(timezone.utc), (start + timedelta(days=1)).astimezone(timezone.utc)
+
+
+def _local_day(moment: datetime) -> date:
+    return to_almaty(moment).date()
+
+
+def revenue_by_day(session: Session, period: Period) -> list[DayRow]:
+    """Выручка по дням календаря Алматы, включая дни без продаж.
+
+    Группируем в Python, а не в SQL: чек в 20:00 UTC относится к следующему дню
+    по местному времени, и группировка по хранимой дате отнесла бы его не туда.
+    Дни без продаж возвращаются нулями — иначе на графике пропадал бы столбец
+    и неделя визуально сжималась.
+    """
+    first = _local_day(period.start)
+    last = _local_day(period.end - timedelta(microseconds=1))
+    buckets: dict[date, DayRow] = {}
+    day = first
+    while day <= last:
+        buckets[day] = DayRow(day, 0, 0, 0, 0, 0)
+        day += timedelta(days=1)
+
+    orders = session.scalars(
+        select(Order).where(Order.created_at >= period.start, Order.created_at < period.end)
+    ).all()
+    order_ids = [o.id for o in orders]
+    items_by_order: dict[int, int] = {}
+    if order_ids:
+        for oid, qty in session.execute(
+            select(OrderItem.order_id, func.sum(OrderItem.qty))
+            .where(OrderItem.order_id.in_(order_ids)).group_by(OrderItem.order_id)
+        ).all():
+            items_by_order[oid] = int(qty or 0)
+
+    for o in orders:
+        row = buckets.get(_local_day(o.created_at))
+        if row is None:
+            continue
+        row.revenue_tiyn += o.total_tiyn
+        row.cogs_tiyn += o.cost_tiyn
+        row.orders_count += 1
+        row.items_count += items_by_order.get(o.id, 0)
+
+    # Возврат относим к дню, когда вернули деньги, а не когда пробили чек:
+    # в кассе за этот день не хватит именно сегодняшней выручки.
+    for refund in session.scalars(
+        select(Refund).where(Refund.created_at >= period.start, Refund.created_at < period.end)
+    ).all():
+        row = buckets.get(_local_day(refund.created_at))
+        if row is not None:
+            row.refunds_tiyn += refund.amount_tiyn
+
+    return [buckets[d] for d in sorted(buckets)]
+
+
+def revenue_by_hour(session: Session, day: date) -> list[HourRow]:
+    """Выручка по часам одного дня — все 24, чтобы столбцы графика не прыгали."""
+    start, end = _day_bounds_utc(day)
+    hours = {h: HourRow(h, 0, 0) for h in range(24)}
+    for o in session.scalars(
+        select(Order).where(Order.created_at >= start, Order.created_at < end)
+    ).all():
+        row = hours[to_almaty(o.created_at).hour]
+        row.revenue_tiyn += o.total_tiyn
+        row.orders_count += 1
+    return [hours[h] for h in range(24)]
+
+
+def summary(session: Session, period: Period) -> Summary:
+    """Показатели верхних плиток: продажи, возвраты, маржа, средний чек."""
+    gross = int(session.scalar(
+        select(func.coalesce(func.sum(Order.total_tiyn), 0))
+        .where(Order.created_at >= period.start, Order.created_at < period.end)) or 0)
+    cogs = int(session.scalar(
+        select(func.coalesce(func.sum(Order.cost_tiyn), 0))
+        .where(Order.created_at >= period.start, Order.created_at < period.end)) or 0)
+    orders = int(session.scalar(
+        select(func.count(Order.id))
+        .where(Order.created_at >= period.start, Order.created_at < period.end)) or 0)
+    items = int(session.scalar(
+        select(func.coalesce(func.sum(OrderItem.qty), 0))
+        .select_from(OrderItem).join(Order, OrderItem.order_id == Order.id)
+        .where(Order.created_at >= period.start, Order.created_at < period.end)) or 0)
+    refunds = _refunds_tiyn(session, period)
+    margin = gross - cogs
+    return Summary(
+        gross_tiyn=gross, refunds_tiyn=refunds, net_tiyn=gross - refunds,
+        cogs_tiyn=cogs, margin_tiyn=margin,
+        margin_pct=round(margin / gross * 100, 1) if gross else 0.0,
+        orders_count=orders, items_count=items,
+        avg_check_tiyn=round(gross / orders) if orders else 0,
+    )
+
+
+def previous_period(period: Period) -> Period:
+    """Отрезок той же длины непосредственно перед данным — база для «к прошлому периоду»."""
+    length = period.end - period.start
+    return Period(start=period.start - length, end=period.start)
+
+
+def day_receipts(session: Session, day: date) -> list[Receipt]:
+    """Чеки за день с составом, способом оплаты и сведениями о возврате."""
+    start, end = _day_bounds_utc(day)
+    orders = session.scalars(
+        select(Order).where(Order.created_at >= start, Order.created_at < end)
+        .order_by(Order.created_at)
+    ).all()
+    if not orders:
+        return []
+    ids = [o.id for o in orders]
+
+    lines: dict[int, list[ReceiptLine]] = {}
+    for it in session.scalars(
+        select(OrderItem).where(OrderItem.order_id.in_(ids)).order_by(OrderItem.id)
+    ).all():
+        lines.setdefault(it.order_id, []).append(
+            ReceiptLine(it.name, it.qty, it.unit_price_tiyn, it.line_total_tiyn))
+
+    pays: dict[int, list[tuple[str, int]]] = {}
+    for p in session.scalars(select(Payment).where(Payment.order_id.in_(ids))).all():
+        pays.setdefault(p.order_id, []).append((p.method, p.amount_tiyn))
+
+    refunds: dict[int, tuple[int, str]] = {}
+    for r in session.scalars(select(Refund).where(Refund.order_id.in_(ids))).all():
+        total, reason = refunds.get(r.order_id, (0, ""))
+        refunds[r.order_id] = (total + r.amount_tiyn, reason or r.reason)
+
+    result = []
+    for o in orders:
+        methods = sorted(pays.get(o.id, []), key=lambda mp: -mp[1])
+        refunded, reason = refunds.get(o.id, (0, ""))
+        result.append(Receipt(
+            number=o.number,
+            at=to_almaty(o.created_at),
+            total_tiyn=o.total_tiyn,
+            method=methods[0][0] if methods else "",
+            methods=tuple(m for m, _ in methods),
+            lines=tuple(lines.get(o.id, [])),
+            refunded_tiyn=refunded,
+            refund_reason=reason,
+        ))
+    return result
+
+
+@dataclass
 class XReport:
     shift_id: int
     opened_at: datetime
