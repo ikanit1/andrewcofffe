@@ -3,6 +3,8 @@
 Иконки категорий подбираются по названию, а не хранятся в БД: категории заводит
 владелец, и отдельное поле пришлось бы заполнять руками для каждой новой.
 """
+import inspect
+
 from nicegui import ui
 
 # Порядок важен: первое совпадение подстроки выигрывает.
@@ -126,6 +128,51 @@ def reason_picker(target) -> None:
         for r in REFUND_REASONS:
             ui.button(r, on_click=lambda r=r: target.set_value(r)) \
                 .props("outline no-caps").classes("h-11 text-sm")
+
+
+def confirm_with_pin(*, title: str, question: str, action_label: str, on_confirm) -> None:
+    """Подтверждение опасного действия PIN-кодом администратора.
+
+    Касса смотрит в интернет через Tailscale Funnel. Одной открытой вкладки для
+    перезапуска сервера или перестройки базы мало: пусть тот, кто нажимает,
+    подтвердит, что он администратор, а не перехваченная сессия.
+
+    on_confirm может быть как обычной функцией, так и корутиной: перезапуск
+    планируется синхронно, а обслуживание базы уходит в поток и ждёт результата.
+    """
+    from app.db import SessionLocal
+    from app.services import user_service
+    from app.services.login_throttle import LockedOut
+
+    with ui.dialog() as dlg, ui.card().classes("gap-3 min-w-80"):
+        ui.label(title).classes("text-lg font-bold")
+        ui.label(question).classes("text-sm").style("color: var(--text-secondary)")
+        pin = ui.input("PIN", password=True).props("inputmode=numeric readonly") \
+            .classes("w-full")
+        numpad(pin, money=False, max_len=6)
+
+        async def confirm() -> None:
+            try:
+                with SessionLocal() as session:
+                    admin = user_service.admin_by_pin(session, (pin.value or "").strip())
+            except LockedOut as e:
+                pin.value = ""
+                ui.notify(f"Слишком много попыток. Подождите {e.retry_after_seconds} с.",
+                          color="red")
+                return
+            if admin is None:
+                pin.value = ""
+                ui.notify("Неверный PIN администратора", color="red")
+                return
+            dlg.close()
+            result = on_confirm()
+            if inspect.isawaitable(result):
+                await result
+
+        with ui.row().classes("gap-2"):
+            ui.button(action_label, on_click=confirm).props("no-caps")
+            ui.button("Отмена", on_click=dlg.close).props("flat no-caps")
+    dlg.open()
 
 
 def numpad(target, *, money: bool = True, max_len: int | None = None,

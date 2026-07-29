@@ -8,6 +8,7 @@ def register_pages() -> None:
         admin_users,
         admin_modifiers,
         admin_stock,
+        admin_system,
         cashier,
         kaspi_admin,
         login,
