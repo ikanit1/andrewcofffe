@@ -64,7 +64,8 @@ def test_today_summary_subtracts_actual_refund_amount(session):
     cat = Category(name="Кофе")
     session.add(cat)
     session.commit()
-    latte = Product(name="Латте", category_id=cat.id, kind="prepared", price_tiyn=100000)
+    latte = Product(name="Латте", category_id=cat.id, kind="prepared", price_tiyn=100000,
+                    inventory_policy="untracked")
     session.add(latte)
     session.commit()
 

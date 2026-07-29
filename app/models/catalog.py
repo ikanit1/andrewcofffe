@@ -21,6 +21,7 @@ class Product(Base):
     category_id: Mapped[int] = mapped_column(ForeignKey("categories.id"))
     kind: Mapped[str]  # "prepared" (по тех-карте) | "retail" (штучный)
     price_tiyn: Mapped[int]
+    inventory_policy: Mapped[str] = mapped_column(default="track")
     # для retail-товара — складская позиция, которая списывается поштучно
     ingredient_id: Mapped[int | None] = mapped_column(ForeignKey("ingredients.id"), default=None)
     sort_order: Mapped[int] = mapped_column(default=0)

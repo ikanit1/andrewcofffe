@@ -10,6 +10,9 @@ def unit_cost_tiyn(session: Session, product: Product, modifier_ids: list[int]) 
     prepared — по тех-карте; retail — по привязанной складской позиции.
     Плюс списания выбранных модификаторов (ModifierItem).
     """
+    if (product.inventory_policy or "track") == "untracked":
+        return 0
+
     cost = 0.0
     if product.kind == "prepared":
         rows = session.scalars(

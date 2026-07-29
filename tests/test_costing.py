@@ -59,3 +59,10 @@ def test_retail_unit_cost_from_linked_ingredient(session):
     session.add(prod)
     session.commit()
     assert costing.unit_cost_tiyn(session, prod, []) == 45000
+
+
+def test_untracked_product_has_zero_unit_cost_even_with_recipe(session):
+    latte, _ = _prepared_latte(session)
+    latte.inventory_policy = "untracked"
+    session.commit()
+    assert costing.unit_cost_tiyn(session, latte, []) == 0

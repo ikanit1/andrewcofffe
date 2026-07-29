@@ -63,6 +63,7 @@ def ensure_schema(engine: Engine) -> None:
             "image": "BLOB",
             "image_mime": "VARCHAR",
             "has_image": "BOOLEAN NOT NULL DEFAULT 0",
+            "inventory_policy": "VARCHAR NOT NULL DEFAULT 'track'",
         },
         "ingredients": {
             # Без REFERENCES: SQLite не умеет добавлять внешний ключ через

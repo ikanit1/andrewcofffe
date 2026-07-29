@@ -9,6 +9,7 @@ _PRODUCT_UPDATABLE_FIELDS = {
     "category_id",
     "kind",
     "price_tiyn",
+    "inventory_policy",
     "ingredient_id",
     "sort_order",
     "is_active",
@@ -18,6 +19,11 @@ _PRODUCT_UPDATABLE_FIELDS = {
 def _validate_kind(kind: str) -> None:
     if kind not in ("prepared", "retail"):
         raise ValueError(f"Неизвестный тип товара: {kind}")
+
+
+def _validate_inventory_policy(policy: str) -> None:
+    if policy not in ("track", "untracked"):
+        raise ValueError(f"Неизвестный режим склада: {policy}")
 
 
 def create_category(session: Session, name: str, sort_order: int = 0) -> Category:
@@ -213,6 +219,8 @@ def update_product(session: Session, product_id: int, **fields) -> Product:
             raise ValueError(f"Нет поля {k}")
     if "kind" in fields:
         _validate_kind(fields["kind"])
+    if "inventory_policy" in fields:
+        _validate_inventory_policy(fields["inventory_policy"])
     if "price_tiyn" in fields and fields["price_tiyn"] <= 0:
         raise ValueError("Цена должна быть больше нуля")
     for k, v in fields.items():

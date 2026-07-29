@@ -17,8 +17,8 @@ from app.models import (
     RefundItem,
     User,
 )
-from app.services import (costing, modifier_service, notification_service, pricing,
-                          promo)
+from app.services import (costing, inventory_audit, modifier_service,
+                          notification_service, pricing, promo)
 from app.services.inventory_service import apply_move
 from app.services.pricing import CartLine, PaymentInput
 from app.services.shift_service import current_open_shift
@@ -107,6 +107,10 @@ def quote_total_tiyn(session: Session, *, lines: list[SaleLineInput],
     гостя с оплатой и без чека, поэтому сверяемся заранее.
     """
     resolved = _resolve_lines(session, lines, limit=100, discount_approved=True)
+    inventory_audit.validate_sale_inventory(
+        session,
+        [(product, mods, li.qty) for li, product, mods, _ in resolved],
+    )
     cart_lines = [r[3] for r in resolved]
     subtotal = pricing.order_subtotal_tiyn(cart_lines)
     order_disc = pricing.order_discount_tiyn(subtotal, order_discount_kind,
@@ -204,6 +208,10 @@ def create_sale(
 
     resolved = _resolve_lines(session, lines, limit=limit,
                               discount_approved=discount_approved)
+    inventory_audit.validate_sale_inventory(
+        session,
+        [(product, mods, li.qty) for li, product, mods, _ in resolved],
+    )
 
     cart_lines = [r[3] for r in resolved]
     line_totals = [pricing.line_total_tiyn(cl) for cl in cart_lines]
@@ -288,6 +296,9 @@ def create_sale(
 
 def _deduct_stock(session: Session, product: Product, mods, qty: int, order_id: int) -> None:
     """Списание по тех-карте (prepared) или по привязке (retail) + модификаторы."""
+    if (product.inventory_policy or "track") == "untracked":
+        return
+
     def move(ingredient_id: int, per_unit_qty: int) -> None:
         ing = session.get(Ingredient, ingredient_id)
         total_qty = per_unit_qty * qty
