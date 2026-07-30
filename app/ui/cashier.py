@@ -6,7 +6,6 @@ from app.db import SessionLocal
 from app.services import shift_service as ss
 from app.services import modifier_service as ms
 from app.services import sales_service as sales
-from app.services import inventory_audit
 from app.services import reporting_service
 from app.services import dashboard_service
 from app.timezone import to_almaty
@@ -210,11 +209,6 @@ def sale_page() -> None:
             ui.button("К смене", on_click=lambda: ui.navigate.to("/cashier"))
             return
         menu = list_menu(session)
-        stock_status = {
-            p.id: inventory_audit.product_inventory_status(session, p)
-            for _, products in menu
-            for p in products
-        }
         cashier_user = session.get(User, uid)
         cashier_limit = cashier_user.discount_limit_percent if cashier_user else 0
 
@@ -257,27 +251,6 @@ def sale_page() -> None:
     def qty_in_cart(product_id: int) -> int:
         return sum(c["qty"] for c in cart if c["product_id"] == product_id)
 
-    def product_block_reason(product_id: int) -> str | None:
-        status = stock_status.get(product_id)
-        if status is None:
-            return None
-        if status.issues:
-            return ", ".join(status.issues)
-        if status.max_qty is not None and qty_in_cart(product_id) >= status.max_qty:
-            return "нет доступного остатка"
-        return None
-
-    def product_stock_label(product_id: int) -> str | None:
-        status = stock_status.get(product_id)
-        if status is None or status.policy == "untracked":
-            return None
-        if status.issues:
-            return "склад не готов"
-        if status.max_qty is not None:
-            left = max(status.max_qty - qty_in_cart(product_id), 0)
-            return f"доступно {left}"
-        return None
-
     def render_layout_switch() -> None:
         layout_row.clear()
         with layout_row:
@@ -294,10 +267,6 @@ def sale_page() -> None:
         render_cart()
 
     def add_to_cart(product) -> None:
-        reason = product_block_reason(product.id)
-        if reason:
-            ui.notify(f"{product.name}: {reason}", color="orange")
-            return
         with SessionLocal() as session:
             groups = ms.groups_for_product(session, product.id)
         if not groups:
@@ -354,14 +323,12 @@ def sale_page() -> None:
         плитка с иконкой, как в макете.
         """
         qty = qty_in_cart(p.id)
-        block_reason = product_block_reason(p.id)
-        stock_label = product_stock_label(p.id)
         # Категорию берём из цикла: объекты меню отсоединены от сессии,
         # и обращение к p.category подняло бы ленивую загрузку на закрытой сессии.
         icon = category_icon(cat_name)
         pad = "p-0 gap-0" if with_media else "p-4 gap-1 justify-end"
         card = ui.card().classes(f"w-full cursor-pointer {pad} cp-hover relative overflow-hidden") \
-            .style(f"min-height: {186 if big else 150}px;opacity:{0.48 if block_reason else 1}")
+            .style(f"min-height: {186 if big else 150}px")
         card.on("click", lambda p=p: add_to_cart(p))
         with card:
             if with_media:
@@ -376,10 +343,6 @@ def sale_page() -> None:
                     f"{'text-2xl' if big else 'text-xl'} font-bold leading-tight")
                 ui.label(f"{promo.effective_price_tiyn(p) / 100:.0f} тг") \
                     .classes("text-lg").style("color: var(--text-secondary)")
-                if stock_label:
-                    ui.label(stock_label).classes("text-xs font-bold") \
-                        .style("color: var(--status-danger)" if block_reason else
-                               "color: var(--text-secondary)")
             if qty:
                 ui.label(str(qty)).classes(
                     "absolute rounded-full flex items-center justify-center "
@@ -391,10 +354,7 @@ def sale_page() -> None:
     def _product_row(p, *, cat_name: str, with_media: bool) -> None:
         """Строка товара для раскладки «Телефон»: крупная зона нажатия."""
         qty = qty_in_cart(p.id)
-        block_reason = product_block_reason(p.id)
-        stock_label = product_stock_label(p.id)
         card = ui.card().classes("w-full cursor-pointer p-4 cp-hover")
-        card.style(f"opacity:{0.48 if block_reason else 1}")
         card.on("click", lambda p=p: add_to_cart(p))
         with card, ui.row().classes("items-center gap-3 w-full no-wrap"):
             if with_media:
@@ -419,10 +379,6 @@ def sale_page() -> None:
                     "rounded-full flex items-center justify-center text-lg font-black"
                 ).style("min-width:32px;height:32px;padding:0 8px;flex:none;"
                         "background: var(--brand-primary); color: var(--text-on-brand)")
-            if stock_label:
-                ui.label(stock_label).classes("text-xs font-bold") \
-                    .style("color: var(--status-danger)" if block_reason else
-                           "color: var(--text-secondary)")
             ui.icon("add", size="28px").classes("rounded-full flex items-center justify-center") \
                 .style("width:52px;height:52px;flex:none;color: var(--brand-primary);"
                        "background: var(--surface-sunken)")

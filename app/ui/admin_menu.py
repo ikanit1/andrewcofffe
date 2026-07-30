@@ -1,13 +1,12 @@
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
 from nicegui import ui
 
 from app.db import SessionLocal
-from app.models import Category
+from app.models import Category, Ingredient, RecipeItem
 from app.services import catalog_service as cs
 from app.services import images
-from app.services import inventory_audit
 from app.ui.design import category_icon
 from app.ui.layout import admin_header
 
@@ -24,16 +23,17 @@ def _hint_for(session, p) -> tuple[str, str]:
     """Подсказка под названием: сигналит о пустой тех-карте или отсутствии склада —
     иначе владелец не узнает об этом, пока не откроет отдельный экран склада."""
     ok, warn = "var(--text-secondary)", "var(--status-warning)"
-    status = inventory_audit.product_inventory_status(session, p)
-    if status.policy == "untracked":
-        return "Склад: не учитывается", ok
-    if status.issues:
-        return "Склад блокирует продажу: " + ", ".join(status.issues), warn
-    if status.max_qty == 0:
-        return "Склад блокирует продажу: нет доступного остатка", warn
-    if status.max_qty is not None:
-        return f"Склад готов: можно продать {status.max_qty}", ok
-    return "Склад готов", ok
+    if p.kind == "prepared":
+        n = session.scalar(
+            select(func.count()).select_from(RecipeItem).where(RecipeItem.product_id == p.id)
+        )
+        if n:
+            return f"Тех-карта: {n} поз.", ok
+        return "Тех-карта не заполнена — себестоимость 0", warn
+    if p.ingredient_id is not None:
+        ing = session.get(Ingredient, p.ingredient_id)
+        return f"Складская позиция: {ing.name if ing else '?'}", ok
+    return "Не привязан к складу — остаток не списывается", warn
 
 
 @ui.page("/admin/menu")
@@ -228,9 +228,6 @@ def admin_menu_page() -> None:
                     ui.label(p.name).classes("text-base font-bold")
                     ui.badge(KIND_LABELS[p.kind]).props("rounded") \
                         .style("background:var(--surface-sunken);color:var(--text-secondary)")
-                    if (p.inventory_policy or "track") == "untracked":
-                        ui.badge("Склад не учитывается").props("rounded") \
-                            .style("background:var(--status-warning-bg);color:var(--status-warning)")
                     if not p.is_active:
                         ui.badge("Убран из меню").props("rounded") \
                             .style("background:var(--status-danger-bg);color:var(--status-danger)")
@@ -247,10 +244,6 @@ def admin_menu_page() -> None:
                 ui.button(icon="photo_camera",
                           on_click=lambda pid=p.id, name=p.name, has=p.has_image: _photo_dialog(pid, name, has)) \
                     .props("flat dense round").tooltip("Фото товара")
-                ui.button(icon="inventory_2",
-                          on_click=lambda pid=p.id, name=p.name, policy=(p.inventory_policy or "track"):
-                              _toggle_inventory_policy(pid, name, policy)) \
-                    .props("flat dense round").tooltip("Режим склада")
                 if p.is_active:
                     ui.button(icon="visibility_off",
                               on_click=lambda pid=p.id, name=p.name: _remove(pid, name)) \
@@ -373,35 +366,6 @@ def admin_menu_page() -> None:
                     .props("outline no-caps color=negative").classes("w-full")
 
             ui.button("Закрыть", on_click=dlg.close).props("flat no-caps").classes("w-full")
-        dlg.open()
-
-    def _toggle_inventory_policy(pid: int, name: str, current_policy: str) -> None:
-        with ui.dialog() as dlg, ui.card().classes("gap-3 min-w-96"):
-            ui.label(f"Склад: {name}").classes("text-lg font-bold")
-            ui.label("Обычные товары должны списывать склад. Режим без учета включайте только для услуг, сертификатов и позиций, где остаток не нужен.") \
-                .classes("text-sm").style("color: var(--text-secondary)")
-            value = ui.radio(
-                {
-                    "track": "Учитывать склад и блокировать продажу при проблемах",
-                    "untracked": "Не учитывать склад по этому товару",
-                },
-                value=current_policy if current_policy in ("track", "untracked") else "track",
-            ).classes("w-full")
-
-            def save() -> None:
-                try:
-                    with SessionLocal() as s:
-                        cs.update_product(s, pid, inventory_policy=value.value)
-                except ValueError as e:
-                    ui.notify(str(e), color="red")
-                    return
-                dlg.close()
-                ui.notify("Режим склада сохранен", color="green")
-                refresh()
-
-            with ui.row().classes("gap-2"):
-                ui.button("Сохранить", on_click=save).props("no-caps")
-                ui.button("Отмена", on_click=dlg.close).props("flat no-caps")
         dlg.open()
 
     def _remove(pid: int, name: str) -> None:

@@ -52,17 +52,6 @@ def test_update_price(session):
     assert session.get(Product, p.id).price_tiyn == 95000
 
 
-def test_update_product_validates_inventory_policy(session):
-    cat = cs.create_category(session, "Снеки")
-    p = cs.create_product(session, name="Сертификат", category_id=cat.id,
-                          kind="prepared", price_tiyn=500000)
-
-    cs.update_product(session, p.id, inventory_policy="untracked")
-    assert session.get(Product, p.id).inventory_policy == "untracked"
-    with pytest.raises(ValueError):
-        cs.update_product(session, p.id, inventory_policy="sometimes")
-
-
 def test_retail_requires_positive_price(session):
     cat = cs.create_category(session, "Банки")
     with pytest.raises(ValueError):

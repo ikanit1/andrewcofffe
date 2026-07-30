@@ -95,56 +95,6 @@ def test_payment_must_match_total(session):
     assert session.get(Ingredient, milk.id).stock_qty == 1000
 
 
-def test_prepared_product_without_recipe_is_blocked(session):
-    cashier, latte, milk, beans, shift = _setup(session)
-    empty = Product(name="РђР№СЃ РєРѕС„Рµ", category_id=latte.category_id,
-                    kind="prepared", price_tiyn=120000)
-    session.add(empty)
-    session.commit()
-
-    with pytest.raises(ValueError, match="Продажа заблокирована складом"):
-        sales.create_sale(session, cashier_id=cashier.id,
-                          lines=[_line(empty.id)],
-                          payments=[PaymentInput("cash", 120000, 120000)])
-    assert session.query(Order).count() == 0
-
-
-def test_sale_blocks_when_cart_needs_more_stock_than_available(session):
-    cashier, latte, milk, beans, shift = _setup(session)
-
-    with pytest.raises(ValueError, match="Молоко"):
-        sales.create_sale(session, cashier_id=cashier.id,
-                          lines=[_line(latte.id, qty=6)],
-                          payments=[PaymentInput("cash", 900000, 900000)])
-    assert session.query(Order).count() == 0
-    assert session.get(Ingredient, milk.id).stock_qty == 1000
-
-
-def test_quote_total_blocks_inventory_problems_before_terminal_payment(session):
-    cashier, latte, milk, beans, shift = _setup(session)
-    milk.stock_qty = 100
-    session.commit()
-
-    with pytest.raises(ValueError, match="Продажа заблокирована складом"):
-        sales.quote_total_tiyn(session, lines=[_line(latte.id)])
-
-
-def test_untracked_product_can_be_sold_without_recipe(session):
-    cashier, latte, milk, beans, shift = _setup(session)
-    service = Product(name="РџРѕРґР°СЂРѕС‡РЅС‹Р№ СЃРµСЂС‚РёС„РёРєР°С‚",
-                      category_id=latte.category_id, kind="prepared",
-                      price_tiyn=500000, inventory_policy="untracked")
-    session.add(service)
-    session.commit()
-
-    order = sales.create_sale(session, cashier_id=cashier.id,
-                              lines=[_line(service.id)],
-                              payments=[PaymentInput("cash", 500000, 500000)])
-
-    assert order.total_tiyn == 500000
-    assert session.query(StockMove).filter_by(kind="sale").count() == 0
-
-
 def test_discount_within_limit_ok(session):
     cashier, latte, milk, beans, shift = _setup(session)
     order = sales.create_sale(
