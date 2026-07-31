@@ -47,6 +47,26 @@ def test_expected_cash_counts_only_cash_sales(session):
     assert ss.expected_cash_tiyn(session, sh.id) == 200000
 
 
+def test_cash_breakdown_splits_expected_cash_into_parts(session):
+    """Дашборд показывает слагаемые ящика, а не только итог — они должны сходиться."""
+    c = _cashier(session)
+    sh = ss.open_shift(session, cashier_id=c.id, opening_cash_tiyn=100000)
+    order = Order(shift_id=sh.id, number=1, status="paid",
+                  subtotal_tiyn=80000, total_tiyn=80000)
+    session.add(order)
+    session.flush()
+    session.add(Payment(order_id=order.id, method="cash", amount_tiyn=80000))
+    session.add(Refund(order_id=order.id, amount_tiyn=30000, reason="брак", cashier_id=c.id))
+    session.commit()
+    ss.add_collection(session, shift_id=sh.id, amount_tiyn=20000)
+
+    cash = ss.cash_breakdown(session, sh.id)
+    assert (cash.opening_tiyn, cash.cash_sales_tiyn) == (100000, 80000)
+    assert (cash.collections_tiyn, cash.cash_refunds_tiyn) == (20000, 30000)
+    assert cash.expected_tiyn == 130000
+    assert cash.expected_tiyn == ss.expected_cash_tiyn(session, sh.id)
+
+
 def test_refund_reduces_expected_cash(session):
     c = _cashier(session)
     sh = ss.open_shift(session, cashier_id=c.id, opening_cash_tiyn=100000)

@@ -27,6 +27,25 @@ PAYMENT_ICONS = {
     "kaspi_terminal": "contactless",
 }
 
+PAYMENT_LABELS = {
+    "cash": "Наличные",
+    "card": "Карта",
+    "kaspi_qr": "Kaspi QR",
+    "kaspi_terminal": "Kaspi (терминал)",
+}
+
+
+def money_tg(tiyn: int) -> str:
+    """Сумма в тенге с неразрывными тысячами: «12 450 тг»."""
+    return f"{tiyn / 100:,.0f} тг".replace(",", " ")
+
+
+def checks_word(n: int) -> str:
+    """«1 чек» / «2 чека» / «5 чеков» — иначе подписи выглядят машинно."""
+    if 11 <= n % 100 <= 14:
+        return f"{n} чеков"
+    return f"{n} чек" if n % 10 == 1 else (f"{n} чека" if 2 <= n % 10 <= 4 else f"{n} чеков")
+
 
 def category_icon(name: str) -> str:
     low = (name or "").lower()

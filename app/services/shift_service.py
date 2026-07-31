@@ -1,4 +1,5 @@
 import logging
+from dataclasses import dataclass
 
 from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
@@ -60,8 +61,20 @@ def _sum(session: Session, stmt) -> int:
     return session.scalar(stmt) or 0
 
 
-def expected_cash_tiyn(session: Session, shift_id: int) -> int:
-    """Ожидаемая наличность = старт + продажи наличными − инкассации − возвраты по наличным чекам."""
+@dataclass(frozen=True)
+class CashBreakdown:
+    """Слагаемые ожидаемой наличности — их показывает дашборд, чтобы владелец
+    видел не только итог в ящике, но и из чего он сложился."""
+
+    opening_tiyn: int
+    cash_sales_tiyn: int
+    collections_tiyn: int
+    cash_refunds_tiyn: int
+    expected_tiyn: int
+
+
+def cash_breakdown(session: Session, shift_id: int) -> CashBreakdown:
+    """Разбор наличности смены: старт + продажи наличными − инкассации − возвраты."""
     sh = session.get(Shift, shift_id)
     if sh is None:
         raise ValueError(f"Смена {shift_id} не найдена")
@@ -103,7 +116,18 @@ def expected_cash_tiyn(session: Session, shift_id: int) -> int:
         .where(Order.shift_id == shift_id)
     ).all()
     refunds = sum(int(amount) * int(cash) // int(total) for amount, cash, total in rows if total)
-    return sh.opening_cash_tiyn + cash_sales - collections - refunds
+    return CashBreakdown(
+        opening_tiyn=sh.opening_cash_tiyn,
+        cash_sales_tiyn=cash_sales,
+        collections_tiyn=collections,
+        cash_refunds_tiyn=refunds,
+        expected_tiyn=sh.opening_cash_tiyn + cash_sales - collections - refunds,
+    )
+
+
+def expected_cash_tiyn(session: Session, shift_id: int) -> int:
+    """Ожидаемая наличность = старт + продажи наличными − инкассации − возвраты по наличным чекам."""
+    return cash_breakdown(session, shift_id).expected_tiyn
 
 
 def close_shift(session: Session, *, shift_id: int, counted_cash_tiyn: int) -> Shift:

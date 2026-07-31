@@ -5,7 +5,8 @@ from nicegui import ui
 from app.db import SessionLocal
 from app.services import reporting_service as rs
 from app.services.report_excel import build_reports_workbook
-from app.ui.design import category_icon, empty_state
+from app.ui.design import category_icon, checks_word as _checks, empty_state
+from app.ui.design import money_tg as _tg
 from app.ui.guard import require_admin
 from app.ui.layout import admin_header
 
@@ -24,15 +25,16 @@ _CARD = ("background: var(--surface-card); border:1px solid var(--border-subtle)
 _CHART_HEIGHT = 130
 
 
-def _tg(tiyn: int) -> str:
-    return f"{tiyn / 100:,.0f} тг".replace(",", " ")
+def _day_arg(value: str | None) -> date | None:
+    """День из адреса «?day=2026-07-28» — так дашборд открывает детализацию сразу.
 
-
-def _checks(n: int) -> str:
-    """«1 чек» / «2 чека» / «5 чеков» — иначе подписи выглядят машинно."""
-    if 11 <= n % 100 <= 14:
-        return f"{n} чеков"
-    return f"{n} чек" if n % 10 == 1 else (f"{n} чека" if 2 <= n % 10 <= 4 else f"{n} чеков")
+    Мусор в параметре игнорируем: открыть отчёты списком лучше, чем показать
+    ошибку из-за подправленной вручную ссылки.
+    """
+    try:
+        return date.fromisoformat(value) if value else None
+    except ValueError:
+        return None
 
 
 def _days_word(n: int) -> str:
@@ -93,7 +95,7 @@ def _bar_row(label: str, icon: str, amount: str, right: str, pct: int) -> None:
 
 
 @ui.page("/admin/reports")
-def reports_page() -> None:
+def reports_page(day: str | None = None) -> None:
     if not require_admin():
         return
     admin_header()
@@ -104,7 +106,7 @@ def reports_page() -> None:
         "from": today.isoformat(),
         "to": today.isoformat(),
         "sort": "rev",          # топ товаров: по выручке или по количеству
-        "day": None,            # открытый день (date) — режим детализации
+        "day": _day_arg(day),   # открытый день (date) — режим детализации
         "day_hour": None,       # фильтр чеков по часу
         "day_filter": "all",
         "open_receipt": None,   # раскрытый чек
