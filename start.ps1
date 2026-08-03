@@ -132,6 +132,31 @@ Write-Host ""
 Write-Host "=== Coffee POS ===" -ForegroundColor Cyan
 
 # =========================================================================
+# 0. Связь ветки с origin
+# =========================================================================
+# Без неё "git pull" не знает, откуда тянуть, и обновление — что из админки,
+# что скриптом — падает с "There is no tracking information for the current
+# branch". Так бывает на установках, развёрнутых не через clone. Чиним молча
+# при каждом запуске: это одна локальная настройка, ничего не скачивается.
+if (Test-Path (Join-Path $root ".git")) {
+    if (Get-Command git -ErrorAction SilentlyContinue) {
+        try {
+            $branch = (git -C $root rev-parse --abbrev-ref HEAD 2>$null)
+            if ($branch) { $branch = $branch.Trim() }
+            if ($branch -and $branch -ne "HEAD") {
+                $tracking = (git -C $root rev-parse --abbrev-ref "$branch@{upstream}" 2>$null)
+                if (-not $tracking) {
+                    git -C $root branch --set-upstream-to="origin/$branch" $branch 2>$null | Out-Null
+                    if ($LASTEXITCODE -eq 0) {
+                        Ok "Ветка $branch связана с origin — обновление снова доступно"
+                    }
+                }
+            }
+        } catch { }
+    }
+}
+
+# =========================================================================
 # 1. Окружение Python
 # =========================================================================
 Step "Окружение:"
