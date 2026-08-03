@@ -60,13 +60,15 @@ def test_pulls_and_installs_then_schedules_restart(session, tmp_path, monkeypatc
     (tmp_path / ".git").mkdir()
     (tmp_path / "requirements.txt").write_text("fastapi\n", encoding="utf-8")
 
-    run = _runner([(0, "Updating abc..def"), (0, "installed")])
+    run = _runner([(0, "master"), (0, "Updating abc..def"), (0, "installed")])
     res = asyncio.run(updater.apply_update(session, runner=run, root=tmp_path))
 
     assert res.ok is True
     assert res.restart_scheduled is True
-    assert run.calls[0][0] == "git" and "pull" in run.calls[0]
-    assert any("pip" in part for part in run.calls[1])
+    assert run.calls[0] == ["git", "rev-parse", "--abbrev-ref", "HEAD"]
+    # Remote и ветка указаны явно: на кассах без tracking голый pull падал
+    assert run.calls[1] == ["git", "pull", "--ff-only", "origin", "master"]
+    assert any("pip" in part for part in run.calls[2])
 
 
 def test_reports_git_failure_without_restarting(session, tmp_path, monkeypatch):
@@ -75,13 +77,13 @@ def test_reports_git_failure_without_restarting(session, tmp_path, monkeypatch):
     monkeypatch.setenv("COFFEEPOS_SUPERVISED", "1")
     (tmp_path / ".git").mkdir()
 
-    run = _runner([(1, "error: local changes would be overwritten")])
+    run = _runner([(0, "master"), (1, "error: local changes would be overwritten")])
     res = asyncio.run(updater.apply_update(session, runner=run, root=tmp_path))
 
     assert res.ok is False
     assert res.restart_scheduled is False
     assert "local changes" in res.log
-    assert len(run.calls) == 1  # до pip не дошли
+    assert len(run.calls) == 2  # ветка и pull; до pip не дошли
 
 
 def test_updates_but_asks_for_manual_restart_when_unsupervised(session, tmp_path, monkeypatch):
@@ -89,7 +91,7 @@ def test_updates_but_asks_for_manual_restart_when_unsupervised(session, tmp_path
     (tmp_path / ".git").mkdir()
     (tmp_path / "requirements.txt").write_text("fastapi\n", encoding="utf-8")
 
-    run = _runner([(0, "ok"), (0, "ok")])
+    run = _runner([(0, "master"), (0, "ok"), (0, "ok")])
     res = asyncio.run(updater.apply_update(session, runner=run, root=tmp_path))
 
     assert res.ok is True
@@ -103,13 +105,49 @@ def test_backs_up_database_before_pulling(session, tmp_path, monkeypatch):
     db = tmp_path / "pos.db"
     db.write_bytes("SQLite format 3\x00данные".encode("utf-8"))
 
-    run = _runner([(0, "ok"), (0, "ok")])
+    run = _runner([(0, "master"), (0, "ok"), (0, "ok")])
     res = asyncio.run(updater.apply_update(session, runner=run, root=tmp_path))
 
     assert res.ok is True
     copies = list((tmp_path / "backups").glob("pos-before-update-*.db"))
     assert len(copies) == 1
     assert copies[0].read_bytes() == db.read_bytes()
+
+
+def test_pulls_from_current_branch_not_only_master(session, tmp_path, monkeypatch):
+    monkeypatch.setenv("COFFEEPOS_SUPERVISED", "1")
+    (tmp_path / ".git").mkdir()
+
+    run = _runner([(0, "stable"), (0, "ok")])
+    res = asyncio.run(updater.apply_update(session, runner=run, root=tmp_path))
+
+    assert res.ok is True
+    assert run.calls[1] == ["git", "pull", "--ff-only", "origin", "stable"]
+    assert "stable" in " ".join(res.steps)
+
+
+def test_refuses_on_detached_head_with_a_way_out(session, tmp_path, monkeypatch):
+    """В detached HEAD тянуть некуда — владельцу нужно сказать, что делать."""
+    monkeypatch.setenv("COFFEEPOS_SUPERVISED", "1")
+    (tmp_path / ".git").mkdir()
+
+    run = _runner([(0, "HEAD")])
+    res = asyncio.run(updater.apply_update(session, runner=run, root=tmp_path))
+
+    assert res.ok is False
+    assert "git checkout master" in res.message
+    assert len(run.calls) == 1
+
+
+def test_diverged_history_gets_a_readable_hint(session, tmp_path, monkeypatch):
+    monkeypatch.setenv("COFFEEPOS_SUPERVISED", "1")
+    (tmp_path / ".git").mkdir()
+
+    run = _runner([(0, "master"), (1, "fatal: Not possible to fast-forward, diverged")])
+    res = asyncio.run(updater.apply_update(session, runner=run, root=tmp_path))
+
+    assert res.ok is False
+    assert "свои правки" in res.message
 
 
 def test_request_restart_leaves_marker_for_launcher(tmp_path):

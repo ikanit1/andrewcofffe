@@ -94,17 +94,41 @@ async def apply_update(session: Session, *, runner=None, root: Path | None = Non
     if copy_name:
         steps.append(f"Копия базы: backups/{copy_name}")
 
-    code, out = await run(["git", "pull", "--ff-only"], root)
+    branch_code, branch_out = await run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"], root)
+    branch = branch_out.strip().splitlines()[-1].strip() if branch_out.strip() else ""
+    if branch_code != 0 or not branch:
+        return UpdateResult(
+            ok=False,
+            message="Не удалось определить ветку git — обновление отменено.",
+            log=branch_out.strip(), steps=steps,
+        )
+    if branch == "HEAD":
+        return UpdateResult(
+            ok=False,
+            message="Репозиторий на кассе не на ветке (detached HEAD). Выполните на "
+                    "моноблоке: git checkout master — и повторите обновление.",
+            steps=steps,
+        )
+
+    # Remote и ветку указываем явно. Голый «git pull --ff-only» требует, чтобы у
+    # ветки была настроена связь с origin, а на кассах, развёрнутых не через
+    # clone, её нет — обновление падало с «no tracking information».
+    code, out = await run(["git", "pull", "--ff-only", "origin", branch], root)
     log = out.strip()
     if code != 0:
+        hint = ""
+        if "diverged" in log or "non-fast-forward" in log:
+            hint = (" Похоже, на кассе есть свои правки поверх общего кода — "
+                    "их нужно убрать вручную с моноблока.")
         return UpdateResult(
             ok=False,
             message="Не удалось забрать новую версию — код остался прежним, "
-                    "перезапуска не будет.",
+                    f"перезапуска не будет.{hint}",
             log=log,
             steps=steps,
         )
-    steps.append("Код обновлён")
+    steps.append(f"Код обновлён (ветка {branch})")
 
     if (root / "requirements.txt").exists():
         pip_code, pip_out = await run(
