@@ -1,11 +1,9 @@
 from app.models import (
     Category,
-    Ingredient,
     Modifier,
     ModifierGroup,
     Product,
     ProductModifierGroup,
-    RecipeItem,
     StockMove,
     User,
 )
@@ -51,26 +49,19 @@ def test_product_with_modifiers(session):
     assert {m.name for m in mods} == {"M", "L"}
 
 
-def test_recipe_and_stock(session):
-    milk = Ingredient(name="Молоко", unit="мл", low_stock_threshold=2000)
-    coffee = Ingredient(name="Кофе зерно", unit="г", low_stock_threshold=500)
-    session.add_all([milk, coffee])
-    session.flush()
-
-    cat = Category(name="Кофе2")
+def test_product_stock_and_moves(session):
+    cat = Category(name="Выпечка")
     session.add(cat)
     session.flush()
+    cro = Product(name="Круассан", category_id=cat.id, kind="retail",
+                  price_tiyn=90000, stock_qty=0, low_stock_threshold=5)
     latte = Product(name="Латте2", category_id=cat.id, kind="prepared", price_tiyn=150000)
-    session.add(latte)
+    session.add_all([cro, latte])
     session.flush()
 
-    session.add_all([
-        RecipeItem(product_id=latte.id, ingredient_id=coffee.id, qty=18),
-        RecipeItem(product_id=latte.id, ingredient_id=milk.id, qty=200),
-        StockMove(ingredient_id=milk.id, qty_delta=10000, kind="purchase"),
-    ])
+    session.add(StockMove(product_id=cro.id, qty_delta=20, kind="purchase"))
     session.commit()
 
-    items = session.query(RecipeItem).filter_by(product_id=latte.id).all()
-    assert {(i.ingredient_id, i.qty) for i in items} == {(coffee.id, 18), (milk.id, 200)}
-    assert milk.stock_qty == 0  # кэш остатка меняет только сервис (задача 7)
+    assert session.query(StockMove).filter_by(product_id=cro.id).one().qty_delta == 20
+    assert cro.stock_qty == 0      # кэш остатка меняет только сервис
+    assert latte.stock_qty is None  # товар без учёта остатка — норма

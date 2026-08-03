@@ -1,6 +1,4 @@
-import pytest
-
-from app.models import Category, Modifier, ModifierItem, Product, ProductModifierGroup
+from app.models import Category, Product, ProductModifierGroup
 from app.services import modifier_service as ms
 
 
@@ -40,15 +38,3 @@ def test_attach_is_idempotent(session):
     ms.attach_group(session, product_id=p.id, group_id=grp.id)
     ms.attach_group(session, product_id=p.id, group_id=grp.id)
     assert session.query(ProductModifierGroup).count() == 1
-
-
-def test_modifier_ingredient_link(session):
-    from app.models import Ingredient
-    milk = Ingredient(name="Молоко", unit="мл")
-    session.add(milk)
-    session.flush()
-    grp = ms.create_group(session, "Молоко")
-    m = ms.add_modifier(session, group_id=grp.id, name="Овсяное +50мл", price_delta_tiyn=15000)
-    ms.set_modifier_item(session, modifier_id=m.id, ingredient_id=milk.id, qty=50)
-    item = session.query(ModifierItem).one()
-    assert item.qty == 50

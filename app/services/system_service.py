@@ -25,7 +25,7 @@ from pathlib import Path
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
-from app.models import (Ingredient, NotificationOutbox, Order, OrderItem,
+from app.models import (NotificationOutbox, Order, OrderItem,
                         Payment, Product, Refund, Shift, StockMove)
 from app.services import updater, updates
 from app.services.runtime import TaskState
@@ -74,7 +74,6 @@ _COUNTED_TABLES = (
     ("Возвраты", Refund),
     ("Движения склада", StockMove),
     ("Товары", Product),
-    ("Складские позиции", Ingredient),
     ("Смены", Shift),
     ("Очередь уведомлений", NotificationOutbox),
 )

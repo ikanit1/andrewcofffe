@@ -1,12 +1,7 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import (
-    Modifier,
-    ModifierGroup,
-    ModifierItem,
-    ProductModifierGroup,
-)
+from app.models import Modifier, ModifierGroup, ProductModifierGroup
 
 
 def create_group(session: Session, name: str, is_required: bool = False) -> ModifierGroup:
@@ -34,23 +29,6 @@ def attach_group(session: Session, *, product_id: int, group_id: int) -> None:
         return
     session.add(ProductModifierGroup(product_id=product_id, group_id=group_id))
     session.commit()
-
-
-def set_modifier_item(session: Session, *, modifier_id: int, ingredient_id: int, qty: int) -> ModifierItem:
-    if qty <= 0:
-        raise ValueError("Количество списания должно быть больше нуля")
-    existing = session.scalar(
-        select(ModifierItem).where(ModifierItem.modifier_id == modifier_id)
-    )
-    if existing is not None:
-        existing.ingredient_id = ingredient_id
-        existing.qty = qty
-        session.commit()
-        return existing
-    item = ModifierItem(modifier_id=modifier_id, ingredient_id=ingredient_id, qty=qty)
-    session.add(item)
-    session.commit()
-    return item
 
 
 def groups_for_product(session: Session, product_id: int) -> list[tuple[ModifierGroup, list[Modifier]]]:

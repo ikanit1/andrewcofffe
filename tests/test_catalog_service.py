@@ -96,115 +96,56 @@ def test_list_menu_admin_only_lists_active_categories(session):
     assert [c.id for c, _ in menu] == [cat.id]
 
 
-def test_new_retail_product_gets_stock_position(session):
-    """Штучный товар без привязки продаётся, но склад молча не списывается —
-    именно так в меню накопились десятки несписывающихся позиций."""
-    from app.models import Ingredient
-
-    cat = cs.create_category(session, "Десерты")
-    p = cs.create_product_with_stock(session, name="Новый торт", category_id=cat.id,
-                                     kind="retail", price_tiyn=100000)
-    assert p.ingredient_id is not None
-    ing = session.get(Ingredient, p.ingredient_id)
-    assert ing.name == "Новый торт"
-    assert ing.unit == "шт"
-    assert ing.stock_qty == 0
+def test_new_product_starts_without_stock_tracking(session):
+    """Новый товар не считается, пока владелец не заведёт остаток на складе."""
+    cat = cs.create_category(session, "Снеки")
+    p = cs.create_product_with_stock(session, name="Кола", category_id=cat.id,
+                                     kind="retail", price_tiyn=50000)
+    assert p.stock_qty is None
+    assert (p.low_stock_threshold, p.cost_tiyn) == (0, 0)
 
 
-def test_new_retail_product_reuses_existing_stock_position(session):
-    """Вторая позиция под то же блюдо развела бы остатки по разным счётчикам."""
-    from app.models import Ingredient
-
-    cat = cs.create_category(session, "Десерты")
-    existing = Ingredient(name="Брауни", unit="шт", stock_qty=5)
-    session.add(existing)
-    session.commit()
-
-    p = cs.create_product_with_stock(session, name="  брауни  ", category_id=cat.id,
-                                     kind="retail", price_tiyn=100000)
-
-    assert p.ingredient_id == existing.id
-    assert session.query(Ingredient).count() == 1
-    assert session.get(Ingredient, existing.id).stock_qty == 5  # остаток не сброшен
-
-
-def test_prepared_product_gets_no_stock_position(session):
-    """Латте списывает молоко и зерно по тех-карте, а не «одну штуку латте»."""
-    from app.models import Ingredient
-
-    cat = cs.create_category(session, "Кофе")
-    p = cs.create_product_with_stock(session, name="Латте", category_id=cat.id,
-                                     kind="prepared", price_tiyn=110000)
-    assert p.ingredient_id is None
-    assert session.query(Ingredient).count() == 0
-
-
-def test_new_retail_product_deducts_stock_on_sale(session):
-    """Сквозная проверка: создать как в админке, принять товар, продать."""
-    from app.models import Ingredient, User
-    from app.services import inventory_service as inv
+def test_sale_deducts_stock_only_when_it_is_tracked(session):
+    from app.models import Shift, User
     from app.services import sales_service as sales
-    from app.services import shift_service as ss
     from app.services.pricing import PaymentInput
 
-    u = User(telegram_id=1, name="Кассир", role="cashier", discount_limit_percent=0)
+    cat = cs.create_category(session, "Снеки")
+    tracked = cs.create_product(session, name="Кола", category_id=cat.id,
+                                kind="retail", price_tiyn=50000)
+    free = cs.create_product(session, name="Латте", category_id=cat.id,
+                             kind="prepared", price_tiyn=110000)
+    tracked.stock_qty = 10
+    session.commit()
+
+    u = User(telegram_id=1, name="Кассир", role="cashier")
     session.add(u)
-    cat = cs.create_category(session, "Десерты")
-    p = cs.create_product_with_stock(session, name="Новый торт", category_id=cat.id,
-                                     kind="retail", price_tiyn=100000)
-    inv.receive_purchase(session, p.ingredient_id, qty=10, total_cost_tiyn=50000)
-    ss.open_shift(session, cashier_id=u.id, opening_cash_tiyn=0)
+    session.flush()
+    session.add(Shift(cashier_id=u.id, opening_cash_tiyn=0, status="open"))
+    session.commit()
 
     sales.create_sale(session, cashier_id=u.id,
-                      lines=[sales.SaleLineInput(product_id=p.id, qty=3)],
-                      payments=[PaymentInput("cash", 300000, 300000)])
+                      lines=[sales.SaleLineInput(product_id=tracked.id, qty=2),
+                             sales.SaleLineInput(product_id=free.id, qty=1)],
+                      payments=[PaymentInput("cash", 210000, 210000)])
 
-    assert session.get(Ingredient, p.ingredient_id).stock_qty == 7
-
-
-def test_new_retail_product_lands_in_matching_stock_section(session):
-    """Позиция должна попасть в раздел склада с именем категории меню.
-
-    Иначе она падает в «Без раздела» в самый низ длинного списка, и владелец
-    решает, что товар на складе не появился вовсе.
-    """
-    from app.models import Ingredient, StockCategory
-
-    cat = cs.create_category(session, "Жвачки")
-    p = cs.create_product_with_stock(session, name="Орбит", category_id=cat.id,
-                                     kind="retail", price_tiyn=30000)
-
-    ing = session.get(Ingredient, p.ingredient_id)
-    assert ing.category_id is not None
-    assert session.get(StockCategory, ing.category_id).name == "Жвачки"
+    assert session.get(Product, tracked.id).stock_qty == 8
+    assert session.get(Product, free.id).stock_qty is None
 
 
-def test_existing_stock_section_is_reused_not_duplicated(session):
-    from app.models import Ingredient, StockCategory
-    from app.services import inventory_service as inv
+def test_delete_product_removes_it_with_stock_journal_and_modifier_links(session):
+    from app.models import ModifierGroup, ProductModifierGroup
 
-    cat = cs.create_category(session, "Жвачки")
-    inv.create_stock_category(session, "жвачки")  # тот же раздел, другой регистр
-
-    p = cs.create_product_with_stock(session, name="Орбит", category_id=cat.id,
-                                     kind="retail", price_tiyn=30000)
-
-    assert session.query(StockCategory).count() == 1
-    ing = session.get(Ingredient, p.ingredient_id)
-    assert ing.category_id == session.query(StockCategory).one().id
-
-
-def test_delete_product_removes_it_with_recipe_and_modifier_links(session):
-    from app.models import ModifierGroup, ProductModifierGroup, RecipeItem, Ingredient
+    from app.models import StockMove
 
     cat = cs.create_category(session, "Кофе")
-    ing = Ingredient(name="Молоко", unit="мл")
     grp = ModifierGroup(name="Объём", is_required=True)
-    session.add_all([ing, grp]); session.flush()
+    session.add(grp)
+    session.flush()
     p = cs.create_product(session, name="Латте", category_id=cat.id,
                           kind="prepared", price_tiyn=110000)
     session.add_all([
-        RecipeItem(product_id=p.id, ingredient_id=ing.id, qty=200),
+        StockMove(product_id=p.id, qty_delta=10, kind="purchase"),
         ProductModifierGroup(product_id=p.id, group_id=grp.id),
     ])
     session.commit()
@@ -212,7 +153,7 @@ def test_delete_product_removes_it_with_recipe_and_modifier_links(session):
     cs.delete_product(session, p.id)
 
     assert session.get(Product, p.id) is None
-    assert session.query(RecipeItem).filter_by(product_id=p.id).count() == 0
+    assert session.query(StockMove).filter_by(product_id=p.id).count() == 0
     assert session.query(ProductModifierGroup).filter_by(product_id=p.id).count() == 0
 
 
@@ -252,48 +193,3 @@ def test_product_can_be_deleted_regardless_of_kind(session):
                                kind="retail", price_tiyn=50000)
     cs.delete_product(session, retail.id)
     assert session.get(Product, retail.id) is None
-
-
-def test_rename_category_renames_matching_stock_section(session):
-    """Раздел склада назван по категории меню. Если переименовать категорию,
-    а раздел оставить, они разойдутся навсегда: новые товары пойдут в раздел
-    с новым именем, старые останутся в разделе со старым."""
-    from app.models import StockCategory
-
-    cat = cs.create_category(session, "Десерты")
-    cs.create_product_with_stock(session, name="Брауни", category_id=cat.id,
-                                 kind="retail", price_tiyn=90000)
-
-    cs.rename_category(session, cat.id, "Выпечка")
-
-    names = [c.name for c in session.query(StockCategory).all()]
-    assert names == ["Выпечка"]
-
-
-def test_rename_category_merges_when_stock_section_already_exists(session):
-    """Раздел с новым именем уже есть — позиции переезжают в него,
-    а опустевший дубль убирается: двух разделов с одним смыслом быть не должно."""
-    from app.models import Ingredient, StockCategory
-
-    cat = cs.create_category(session, "Десерты")
-    cs.create_product_with_stock(session, name="Брауни", category_id=cat.id,
-                                 kind="retail", price_tiyn=90000)
-    target = StockCategory(name="Выпечка")
-    session.add(target)
-    session.commit()
-
-    cs.rename_category(session, cat.id, "Выпечка")
-
-    sections = session.query(StockCategory).all()
-    assert [c.name for c in sections] == ["Выпечка"]
-    brownie = session.query(Ingredient).filter_by(name="Брауни").one()
-    assert brownie.category_id == sections[0].id
-
-
-def test_rename_category_without_stock_section_is_harmless(session):
-    from app.models import StockCategory
-
-    cat = cs.create_category(session, "Кофе")
-    cs.rename_category(session, cat.id, "Напитки")
-    assert session.query(StockCategory).count() == 0
-    assert session.get(Category, cat.id).name == "Напитки"

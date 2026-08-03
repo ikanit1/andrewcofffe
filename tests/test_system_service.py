@@ -9,7 +9,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from app.db import Base, enable_sqlite_fk
-from app.models import (Category, Ingredient, Order, OrderItem, Payment,
+from app.models import (Category, Order, OrderItem, Payment,
                         Product, Shift, User)
 from app.services import runtime
 from app.services import system_service as ss
@@ -24,7 +24,6 @@ LAST_ORDER_AT = datetime(2026, 7, 27, 12, 0, tzinfo=timezone.utc)
 def _seed(session: Session) -> None:
     session.add_all([
         Category(id=1, name="Кофе"),
-        Ingredient(id=1, name="Молоко", unit="мл"),
     ])
     session.add(Product(id=1, name="Латте", category_id=1, kind="prepared",
                         price_tiyn=150000))
@@ -75,7 +74,7 @@ def test_database_info_counts_rows_by_human_names(file_session):
     assert counts["Оплаты"] == 2
     assert counts["Возвраты"] == 0
     assert counts["Товары"] == 1
-    assert counts["Складские позиции"] == 1
+    assert counts["Движения склада"] == 0
     assert counts["Смены"] == 1
     assert counts["Очередь уведомлений"] == 0
 

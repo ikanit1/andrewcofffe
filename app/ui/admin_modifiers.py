@@ -3,7 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.db import SessionLocal
-from app.models import Ingredient, Modifier, ModifierGroup, Product
+from app.models import Modifier, ModifierGroup, Product
 from app.services import modifier_service as ms
 from app.ui.layout import admin_header
 
@@ -23,10 +23,6 @@ def admin_modifiers_page() -> None:
         groups_box.clear()
         with groups_box, SessionLocal() as session:
             groups = session.scalars(select(ModifierGroup)).all()
-            ing_options = {
-                i.id: f"{i.name} ({i.unit})"
-                for i in session.scalars(select(Ingredient).where(Ingredient.is_active)).all()
-            }
             for g in groups:
                 req = "обязательная" if g.is_required else "необязательная"
                 ui.label(f"{g.name} — {req}").classes("text-xl mt-4")
@@ -36,23 +32,17 @@ def admin_modifiers_page() -> None:
                 with ui.row().classes("items-end gap-2"):
                     mn = ui.input("Новый модификатор")
                     mp = ui.number("Наценка, тг", value=0, min=0, format="%.0f")
-                    mi = ui.select(ing_options, label="Списывать ингредиент (необяз.)")
-                    mq = ui.number("Кол-во", value=0, min=0, format="%.0f")
 
-                    def add_mod(gid=g.id, name=mn, price=mp, ing=mi, qty=mq) -> None:
+                    # Модификатор влияет только на цену: склад считается по самому
+                    # товару, отдельного расхода на сироп или второй шот в системе нет.
+                    def add_mod(gid=g.id, name=mn, price=mp) -> None:
                         if not name.value:
                             ui.notify("Введите название", color="red")
                             return
-                        if ing.value and (not qty.value or round(qty.value) < 1):
-                            ui.notify("Укажите количество списания ≥ 1", color="red")
-                            return
                         try:
                             with SessionLocal() as s:
-                                mod = ms.add_modifier(s, group_id=gid, name=name.value,
-                                                      price_delta_tiyn=round((price.value or 0) * 100))
-                                if ing.value and qty.value:
-                                    ms.set_modifier_item(s, modifier_id=mod.id,
-                                                         ingredient_id=ing.value, qty=round(qty.value))
+                                ms.add_modifier(s, group_id=gid, name=name.value,
+                                                price_delta_tiyn=round((price.value or 0) * 100))
                         except (ValueError, IntegrityError) as e:
                             ui.notify(str(e), color="red")
                             return

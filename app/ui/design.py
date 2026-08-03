@@ -40,11 +40,20 @@ def money_tg(tiyn: int) -> str:
     return f"{tiyn / 100:,.0f} тг".replace(",", " ")
 
 
-def checks_word(n: int) -> str:
-    """«1 чек» / «2 чека» / «5 чеков» — иначе подписи выглядят машинно."""
+def plural_ru(n: int, one: str, few: str, many: str) -> str:
+    """«1 чек» / «2 чека» / «5 чеков» — иначе подписи выглядят машинно.
+
+    Исключение 11–14 обязательно: без него 11 давало бы «11 чек», а 112 — «112 чека».
+    """
     if 11 <= n % 100 <= 14:
-        return f"{n} чеков"
-    return f"{n} чек" if n % 10 == 1 else (f"{n} чека" if 2 <= n % 10 <= 4 else f"{n} чеков")
+        return f"{n} {many}"
+    if n % 10 == 1:
+        return f"{n} {one}"
+    return f"{n} {few}" if 2 <= n % 10 <= 4 else f"{n} {many}"
+
+
+def checks_word(n: int) -> str:
+    return plural_ru(n, "чек", "чека", "чеков")
 
 
 def category_icon(name: str) -> str:

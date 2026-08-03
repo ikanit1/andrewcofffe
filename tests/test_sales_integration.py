@@ -1,5 +1,5 @@
 from app.auth import hash_pin
-from app.models import Category, Ingredient, Product, RecipeItem, User
+from app.models import Category, Product, User
 from app.services import sales_service as sales
 from app.services import shift_service as ss
 from app.services import user_service as us
@@ -14,17 +14,9 @@ def test_end_to_end_login_shift_sale_refund_close(session):
     cat = Category(name="Кофе")
     session.add(cat)
     session.flush()
-    milk = Ingredient(name="Молоко", unit="мл", stock_qty=1000, avg_cost_tiyn=50.0)
-    beans = Ingredient(name="Кофе зерно", unit="г", stock_qty=100, avg_cost_tiyn=300.0)
-    session.add_all([milk, beans])
-    session.flush()
-    latte = Product(name="Латте", category_id=cat.id, kind="prepared", price_tiyn=150000)
+    latte = Product(name="Латте", category_id=cat.id, kind="prepared",
+                    price_tiyn=150000, stock_qty=10, cost_tiyn=15400)
     session.add(latte)
-    session.flush()
-    session.add_all([
-        RecipeItem(product_id=latte.id, ingredient_id=beans.id, qty=18),
-        RecipeItem(product_id=latte.id, ingredient_id=milk.id, qty=200),
-    ])
     session.commit()
 
     # вход по пину
@@ -40,7 +32,7 @@ def test_end_to_end_login_shift_sale_refund_close(session):
         payments=[PaymentInput("cash", 300000, 300000)],
     )
     assert order.total_tiyn == 300000
-    assert session.get(Ingredient, milk.id).stock_qty == 600
+    assert session.get(Product, latte.id).stock_qty == 8
 
     # частичный возврат одной порции — приготовленный напиток склад не возвращает
     from app.models import OrderItem

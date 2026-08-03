@@ -154,7 +154,7 @@ def cashier_page() -> None:
                 .props("outline").classes("h-12")
 
     with SessionLocal() as s:
-        low = dashboard_service.low_stock_ingredients(s)
+        low = dashboard_service.low_stock_products(s)
     if low:
         with ui.card().classes("w-full max-w-3xl p-4 gap-2") \
                 .style("background: var(--status-warning-bg); "
@@ -163,9 +163,9 @@ def cashier_page() -> None:
                 ui.icon("warning", size="20px").style("color: var(--status-warning)")
                 ui.label(f"На исходе ({len(low)})").classes("font-bold") \
                     .style("color: var(--status-warning)")
-            for ing in low:
+            for p in low:
                 ui.label(
-                    f"{ing.name}: {ing.stock_qty} {ing.unit} (порог {ing.low_stock_threshold})"
+                    f"{p.name}: {p.stock_qty} шт (порог {p.low_stock_threshold})"
                 ).classes("text-sm").style("color: var(--text-secondary)")
 
     with ui.card().classes("w-full max-w-3xl p-4 gap-3") \

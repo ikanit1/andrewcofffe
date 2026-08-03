@@ -2,13 +2,11 @@ import pytest
 
 from app.models import (
     Category,
-    Ingredient,
     NotificationOutbox,
     Order,
     OrderItem,
     Payment,
     Product,
-    RecipeItem,
     Refund,
     RefundItem,
     StockMove,
@@ -20,25 +18,18 @@ from app.services.pricing import PaymentInput
 
 
 def _setup(session):
+    """Латте — со счётчиком штук (5 в наличии), закупка 154 тг за штуку."""
     cashier = User(telegram_id=1, name="Кассир", role="cashier", discount_limit_percent=10)
     session.add(cashier)
     cat = Category(name="Кофе")
     session.add(cat)
     session.flush()
-    milk = Ingredient(name="Молоко", unit="мл", stock_qty=1000, avg_cost_tiyn=50.0)
-    beans = Ingredient(name="Кофе зерно", unit="г", stock_qty=100, avg_cost_tiyn=300.0)
-    session.add_all([milk, beans])
-    session.flush()
-    latte = Product(name="Латте", category_id=cat.id, kind="prepared", price_tiyn=150000)
+    latte = Product(name="Латте", category_id=cat.id, kind="prepared", price_tiyn=150000,
+                    stock_qty=5, cost_tiyn=15400)
     session.add(latte)
-    session.flush()
-    session.add_all([
-        RecipeItem(product_id=latte.id, ingredient_id=beans.id, qty=18),
-        RecipeItem(product_id=latte.id, ingredient_id=milk.id, qty=200),
-    ])
     session.commit()
     shift = ss.open_shift(session, cashier_id=cashier.id, opening_cash_tiyn=0)
-    return cashier, latte, milk, beans, shift
+    return cashier, latte, shift
 
 
 def _line(product_id, qty=1, modifier_ids=None, discount_kind=None, discount_value=0):
@@ -49,7 +40,7 @@ def _line(product_id, qty=1, modifier_ids=None, discount_kind=None, discount_val
 
 
 def test_sale_persists_order_and_deducts_stock(session):
-    cashier, latte, milk, beans, shift = _setup(session)
+    cashier, latte, shift = _setup(session)
     order = sales.create_sale(
         session,
         cashier_id=cashier.id,
@@ -59,15 +50,14 @@ def test_sale_persists_order_and_deducts_stock(session):
     assert order.total_tiyn == 300000
     assert order.cost_tiyn == 2 * 15400
     assert order.number == 1
-    assert session.get(Ingredient, milk.id).stock_qty == 600
-    assert session.get(Ingredient, beans.id).stock_qty == 64
+    assert session.get(Product, latte.id).stock_qty == 3
     moves = session.query(StockMove).filter_by(kind="sale").all()
     assert {m.ref_type for m in moves} == {"order"}
     assert all(m.ref_id == order.id for m in moves)
 
 
 def test_order_numbers_increment_per_shift(session):
-    cashier, latte, milk, beans, shift = _setup(session)
+    cashier, latte, shift = _setup(session)
     o1 = sales.create_sale(session, cashier_id=cashier.id, lines=[_line(latte.id)],
                            payments=[PaymentInput("cash", 150000, 150000)])
     o2 = sales.create_sale(session, cashier_id=cashier.id, lines=[_line(latte.id)],
@@ -76,7 +66,7 @@ def test_order_numbers_increment_per_shift(session):
 
 
 def test_split_payment_and_change(session):
-    cashier, latte, milk, beans, shift = _setup(session)
+    cashier, latte, shift = _setup(session)
     order = sales.create_sale(
         session, cashier_id=cashier.id, lines=[_line(latte.id)],
         payments=[PaymentInput("cash", 50000, 100000), PaymentInput("kaspi_qr", 100000)],
@@ -87,16 +77,16 @@ def test_split_payment_and_change(session):
 
 
 def test_payment_must_match_total(session):
-    cashier, latte, milk, beans, shift = _setup(session)
+    cashier, latte, shift = _setup(session)
     with pytest.raises(ValueError):
         sales.create_sale(session, cashier_id=cashier.id, lines=[_line(latte.id)],
                           payments=[PaymentInput("cash", 100000, 100000)])
     assert session.query(Order).count() == 0
-    assert session.get(Ingredient, milk.id).stock_qty == 1000
+    assert session.get(Product, latte.id).stock_qty == 5
 
 
 def test_discount_within_limit_ok(session):
-    cashier, latte, milk, beans, shift = _setup(session)
+    cashier, latte, shift = _setup(session)
     order = sales.create_sale(
         session, cashier_id=cashier.id,
         lines=[_line(latte.id, discount_kind="percent", discount_value=10)],
@@ -106,7 +96,7 @@ def test_discount_within_limit_ok(session):
 
 
 def test_discount_over_limit_blocked(session):
-    cashier, latte, milk, beans, shift = _setup(session)
+    cashier, latte, shift = _setup(session)
     with pytest.raises(PermissionError):
         sales.create_sale(
             session, cashier_id=cashier.id,
@@ -117,7 +107,7 @@ def test_discount_over_limit_blocked(session):
 
 
 def test_discount_over_limit_allowed_when_approved(session):
-    cashier, latte, milk, beans, shift = _setup(session)
+    cashier, latte, shift = _setup(session)
     order = sales.create_sale(
         session, cashier_id=cashier.id,
         lines=[_line(latte.id, discount_kind="percent", discount_value=20)],
@@ -128,7 +118,7 @@ def test_discount_over_limit_allowed_when_approved(session):
 
 
 def test_order_discount_enqueues_notification(session):
-    cashier, latte, milk, beans, shift = _setup(session)
+    cashier, latte, shift = _setup(session)
     sales.create_sale(
         session, cashier_id=cashier.id, lines=[_line(latte.id)],
         payments=[PaymentInput("cash", 135000, 135000)],
@@ -141,7 +131,7 @@ def test_order_discount_enqueues_notification(session):
 
 def test_order_discount_is_spread_over_line_totals(session):
     """Скидка на чек должна уменьшать позиции: сумма строк = итог чека."""
-    cashier, latte, milk, beans, shift = _setup(session)
+    cashier, latte, shift = _setup(session)
     order = sales.create_sale(
         session, cashier_id=cashier.id, lines=[_line(latte.id)],
         payments=[PaymentInput("cash", 135000, 135000)],
@@ -153,7 +143,7 @@ def test_order_discount_is_spread_over_line_totals(session):
 
 def test_order_discount_remainder_lands_on_last_line(session):
     """Неделимый остаток скидки не теряется: сумма строк точно равна итогу."""
-    cashier, latte, milk, beans, shift = _setup(session)
+    cashier, latte, shift = _setup(session)
     # 3 позиции по 1500 тг, скидка 100 тг: 10000/3 = 3333 с остатком 1 тиын
     order = sales.create_sale(
         session, cashier_id=cashier.id,
@@ -168,7 +158,7 @@ def test_order_discount_remainder_lands_on_last_line(session):
 
 def test_full_refund_returns_exactly_what_guest_paid(session):
     """Возврат чека со скидкой не должен превышать уплаченную сумму."""
-    cashier, latte, milk, beans, shift = _setup(session)
+    cashier, latte, shift = _setup(session)
     order = sales.create_sale(
         session, cashier_id=cashier.id, lines=[_line(latte.id)],
         payments=[PaymentInput("cash", 135000, 135000)],
@@ -180,7 +170,7 @@ def test_full_refund_returns_exactly_what_guest_paid(session):
 
 
 def test_sale_requires_open_shift(session):
-    cashier, latte, milk, beans, shift = _setup(session)
+    cashier, latte, shift = _setup(session)
     ss.close_shift(session, shift_id=shift.id, counted_cash_tiyn=0)
     with pytest.raises(ValueError):
         sales.create_sale(session, cashier_id=cashier.id, lines=[_line(latte.id)],
@@ -193,28 +183,25 @@ def test_full_refund_marks_order_and_restocks_retail(session):
     cat = Category(name="Снеки")
     session.add(cat)
     session.flush()
-    cro = Ingredient(name="Круассан", unit="шт", stock_qty=10, avg_cost_tiyn=45000.0)
-    session.add(cro)
-    session.flush()
     prod = Product(name="Круассан", category_id=cat.id, kind="retail",
-                   price_tiyn=90000, ingredient_id=cro.id)
+                   price_tiyn=90000, stock_qty=10, cost_tiyn=45000)
     session.add(prod)
     session.commit()
     ss.open_shift(session, cashier_id=cashier.id, opening_cash_tiyn=0)
     order = sales.create_sale(session, cashier_id=cashier.id,
                               lines=[_line(prod.id, qty=2)],
                               payments=[PaymentInput("cash", 180000, 180000)])
-    assert session.get(Ingredient, cro.id).stock_qty == 8
+    assert session.get(Product, prod.id).stock_qty == 8
 
     refund = sales.refund_sale(session, order_id=order.id, cashier_id=cashier.id,
                                reason="передумал", item_qty=None)
     assert refund.amount_tiyn == 180000
     assert session.get(Order, order.id).status == "refunded"
-    assert session.get(Ingredient, cro.id).stock_qty == 10
+    assert session.get(Product, prod.id).stock_qty == 10
 
 
 def test_partial_refund_sets_partial_status(session):
-    cashier, latte, milk, beans, shift = _setup(session)
+    cashier, latte, shift = _setup(session)
     order = sales.create_sale(session, cashier_id=cashier.id, lines=[_line(latte.id, qty=3)],
                               payments=[PaymentInput("cash", 450000, 450000)])
     item = session.query(OrderItem).filter_by(order_id=order.id).one()
@@ -223,11 +210,12 @@ def test_partial_refund_sets_partial_status(session):
     assert refund.amount_tiyn == 150000
     assert session.get(Order, order.id).status == "partially_refunded"
     assert session.get(OrderItem, item.id).refunded_qty == 1
-    assert session.get(Ingredient, milk.id).stock_qty == 1000 - 600
+    # Латте приготовленный: вылить обратно нельзя, остаток не восстанавливается
+    assert session.get(Product, latte.id).stock_qty == 2
 
 
 def test_cannot_refund_more_than_bought(session):
-    cashier, latte, milk, beans, shift = _setup(session)
+    cashier, latte, shift = _setup(session)
     order = sales.create_sale(session, cashier_id=cashier.id, lines=[_line(latte.id, qty=1)],
                               payments=[PaymentInput("cash", 150000, 150000)])
     item = session.query(OrderItem).filter_by(order_id=order.id).one()
@@ -237,7 +225,7 @@ def test_cannot_refund_more_than_bought(session):
 
 
 def test_write_failure_rolls_back(session, monkeypatch):
-    cashier, latte, milk, beans, shift = _setup(session)
+    cashier, latte, shift = _setup(session)
     import app.services.sales_service as s
     # заставим списание упасть уже после создания заказа
     monkeypatch.setattr(s, "_deduct_stock",
@@ -247,11 +235,11 @@ def test_write_failure_rolls_back(session, monkeypatch):
                       payments=[PaymentInput("cash", 150000, 150000)])
     # откат: заказа нет, склад не тронут, сессия пригодна для дальнейших запросов
     assert session.query(Order).count() == 0
-    assert session.get(Ingredient, milk.id).stock_qty == 1000
+    assert session.get(Product, latte.id).stock_qty == 5
 
 
 def test_required_modifier_group_enforced_server_side(session):
-    cashier, latte, milk, beans, shift = _setup(session)
+    cashier, latte, shift = _setup(session)
     from app.models import ModifierGroup, Modifier, ProductModifierGroup
     grp = ModifierGroup(name="Объём", is_required=True)
     session.add(grp)
@@ -278,7 +266,7 @@ def test_required_modifier_group_enforced_server_side(session):
 
 
 def test_create_sale_stores_terminal_payment_fields(session):
-    cashier, latte, milk, beans, shift = _setup(session)
+    cashier, latte, shift = _setup(session)
     order = sales.create_sale(
         session, cashier_id=cashier.id, lines=[_line(latte.id)],
         payments=[PaymentInput("kaspi_terminal", 150000, None,
@@ -294,7 +282,7 @@ def test_create_sale_stores_terminal_payment_fields(session):
 
 
 def test_refund_enqueues_notification(session):
-    cashier, latte, milk, beans, shift = _setup(session)
+    cashier, latte, shift = _setup(session)
     order = sales.create_sale(session, cashier_id=cashier.id, lines=[_line(latte.id)],
                               payments=[PaymentInput("cash", 150000, 150000)])
     sales.refund_sale(session, order_id=order.id, cashier_id=cashier.id, reason="брак")
@@ -306,7 +294,7 @@ def test_refund_enqueues_notification(session):
 
 
 def test_sale_enqueues_notification(session):
-    cashier, latte, milk, beans, shift = _setup(session)
+    cashier, latte, shift = _setup(session)
     sales.create_sale(session, cashier_id=cashier.id, lines=[_line(latte.id, qty=2)],
                       payments=[PaymentInput("cash", 300000, 300000)])
     note = session.query(NotificationOutbox).filter_by(kind="sale").one()
@@ -319,7 +307,7 @@ def test_sale_enqueues_notification(session):
 
 
 def test_sale_notification_shows_split_payment_methods(session):
-    cashier, latte, milk, beans, shift = _setup(session)
+    cashier, latte, shift = _setup(session)
     sales.create_sale(
         session, cashier_id=cashier.id, lines=[_line(latte.id)],
         payments=[PaymentInput("cash", 50000, 50000), PaymentInput("card", 100000, None)],
@@ -340,7 +328,7 @@ def test_sale_charges_promo_price_in_the_morning(session, monkeypatch):
     """Утром «Латте» проводится по акционной цене, а не по базовой из карточки."""
     from app.services import promo
 
-    cashier, latte, milk, beans, shift = _setup(session)
+    cashier, latte, shift = _setup(session)
     monkeypatch.setattr(promo, "now_almaty", lambda: _at_almaty(9, 0))
 
     order = sales.create_sale(
@@ -353,7 +341,7 @@ def test_sale_charges_promo_price_in_the_morning(session, monkeypatch):
 def test_sale_charges_base_price_after_promo_ends(session, monkeypatch):
     from app.services import promo
 
-    cashier, latte, milk, beans, shift = _setup(session)
+    cashier, latte, shift = _setup(session)
     monkeypatch.setattr(promo, "now_almaty", lambda: _at_almaty(11, 0))
 
     order = sales.create_sale(
@@ -370,7 +358,7 @@ def test_price_change_since_cart_is_reported_separately(session):
     одно от другого обязательно — иначе кассир видит «оплата не покрывает итог»
     и не понимает, что произошло.
     """
-    cashier, latte, milk, beans, shift = _setup(session)
+    cashier, latte, shift = _setup(session)
     with pytest.raises(sales.PriceChanged) as e:
         sales.create_sale(
             session, cashier_id=cashier.id, lines=[_line(latte.id)],
@@ -383,7 +371,7 @@ def test_price_change_since_cart_is_reported_separately(session):
 
 
 def test_matching_expected_total_passes_through(session):
-    cashier, latte, milk, beans, shift = _setup(session)
+    cashier, latte, shift = _setup(session)
     order = sales.create_sale(
         session, cashier_id=cashier.id, lines=[_line(latte.id)],
         payments=[PaymentInput("cash", 150000, 150000)],
@@ -394,7 +382,7 @@ def test_matching_expected_total_passes_through(session):
 
 def test_without_expected_total_behaviour_is_unchanged(session):
     """Параметр необязательный: старые вызовы и тесты не должны сломаться."""
-    cashier, latte, milk, beans, shift = _setup(session)
+    cashier, latte, shift = _setup(session)
     order = sales.create_sale(
         session, cashier_id=cashier.id, lines=[_line(latte.id)],
         payments=[PaymentInput("cash", 150000, 150000)],
@@ -405,7 +393,7 @@ def test_without_expected_total_behaviour_is_unchanged(session):
 def test_price_change_checked_before_payment_mismatch(session):
     """Когда цена изменилась, кассиру нужно сказать именно об этом,
     а не о несходящейся оплате — она следствие."""
-    cashier, latte, milk, beans, shift = _setup(session)
+    cashier, latte, shift = _setup(session)
     with pytest.raises(sales.PriceChanged):
         sales.create_sale(
             session, cashier_id=cashier.id, lines=[_line(latte.id)],
@@ -420,7 +408,7 @@ def test_quote_total_matches_what_create_sale_would_charge(session):
     Нужна для Kaspi: там деньги списывает терминал ДО create_sale, и узнать
     об изменившейся цене после списания — значит оставить гостя без чека.
     """
-    cashier, latte, milk, beans, shift = _setup(session)
+    cashier, latte, shift = _setup(session)
     lines = [_line(latte.id, qty=2)]
 
     quoted = sales.quote_total_tiyn(session, lines=lines)
@@ -430,7 +418,7 @@ def test_quote_total_matches_what_create_sale_would_charge(session):
 
 
 def test_quote_total_accounts_for_order_discount(session):
-    cashier, latte, milk, beans, shift = _setup(session)
+    cashier, latte, shift = _setup(session)
     lines = [_line(latte.id)]
     quoted = sales.quote_total_tiyn(session, lines=lines,
                                     order_discount_kind="percent",
@@ -439,7 +427,7 @@ def test_quote_total_accounts_for_order_discount(session):
 
 
 def test_quote_total_rejects_unavailable_product(session):
-    cashier, latte, milk, beans, shift = _setup(session)
+    cashier, latte, shift = _setup(session)
     latte.is_active = False
     session.commit()
     with pytest.raises(ValueError):

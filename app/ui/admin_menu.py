@@ -4,7 +4,7 @@ from sqlalchemy.exc import IntegrityError
 from nicegui import ui
 
 from app.db import SessionLocal
-from app.models import Category, Ingredient, RecipeItem
+from app.models import Category
 from app.services import catalog_service as cs
 from app.services import images
 from app.ui.design import category_icon
@@ -20,20 +20,18 @@ _ROW_STYLE = (
 
 
 def _hint_for(session, p) -> tuple[str, str]:
-    """Подсказка под названием: сигналит о пустой тех-карте или отсутствии склада —
-    иначе владелец не узнает об этом, пока не откроет отдельный экран склада."""
+    """Подсказка под названием: остаток и закупочная цена.
+
+    Товар без учёта остатка — это норма (кофе варят из общих запасов), поэтому
+    подсказка нейтральная: она сообщает, а не требует что-то заполнить.
+    """
     ok, warn = "var(--text-secondary)", "var(--status-warning)"
-    if p.kind == "prepared":
-        n = session.scalar(
-            select(func.count()).select_from(RecipeItem).where(RecipeItem.product_id == p.id)
-        )
-        if n:
-            return f"Тех-карта: {n} поз.", ok
-        return "Тех-карта не заполнена — себестоимость 0", warn
-    if p.ingredient_id is not None:
-        ing = session.get(Ingredient, p.ingredient_id)
-        return f"Складская позиция: {ing.name if ing else '?'}", ok
-    return "Не привязан к складу — остаток не списывается", warn
+    cost = (f", закупка {p.cost_tiyn / 100:.0f} тг" if p.cost_tiyn
+            else ", закупочная цена не задана")
+    if p.stock_qty is None:
+        return "Остаток не считается" + cost, ok
+    low = p.low_stock_threshold > 0 and p.stock_qty < p.low_stock_threshold
+    return f"Остаток: {p.stock_qty} шт{cost}", warn if low else ok
 
 
 @ui.page("/admin/menu")

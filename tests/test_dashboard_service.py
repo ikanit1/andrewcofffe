@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
-from app.models import Category, Ingredient, Order, OrderItem, Product, Refund, Shift, User
+from app.models import Category, Order, OrderItem, Product, Refund, Shift, User
 from app.services import dashboard_service as ds
 from app.services import sales_service as sales
 from app.services.pricing import PaymentInput
@@ -86,15 +86,22 @@ def test_today_summary_subtracts_actual_refund_amount(session):
     assert summary.items_count == 1
 
 
-def test_low_stock_ingredients_lists_only_active_below_threshold(session):
-    ok = Ingredient(name="Сахар", unit="г", stock_qty=1000, low_stock_threshold=500)
-    low = Ingredient(name="Молоко", unit="мл", stock_qty=100, low_stock_threshold=500)
-    inactive_low = Ingredient(name="Старое", unit="шт", stock_qty=0,
-                             low_stock_threshold=10, is_active=False)
-    session.add_all([ok, low, inactive_low])
+def test_low_stock_products_lists_only_active_below_threshold(session):
+    cat = Category(name="Выпечка")
+    session.add(cat)
+    session.flush()
+    session.add_all([
+        Product(name="Сахар", category_id=cat.id, kind="retail", price_tiyn=1000,
+                stock_qty=1000, low_stock_threshold=500),
+        Product(name="Круассан", category_id=cat.id, kind="retail", price_tiyn=1000,
+                stock_qty=100, low_stock_threshold=500),
+        Product(name="Старое", category_id=cat.id, kind="retail", price_tiyn=1000,
+                stock_qty=0, low_stock_threshold=10, is_active=False),
+        Product(name="Латте", category_id=cat.id, kind="prepared", price_tiyn=1000,
+                stock_qty=None, low_stock_threshold=500),
+    ])
     session.commit()
-    result = ds.low_stock_ingredients(session)
-    assert [i.name for i in result] == ["Молоко"]
+    assert [p.name for p in ds.low_stock_products(session)] == ["Круассан"]
 
 
 # --------------------------------------------------------------------------
@@ -181,18 +188,25 @@ def test_dashboard_recent_receipts_are_newest_first(session):
     assert [r.number for r in dash.recent] == [3, 2, 1]
 
 
-def test_dashboard_stock_skips_positions_without_threshold(session):
+def test_dashboard_stock_skips_products_without_threshold(session):
+    cat = Category(name="Выпечка")
+    session.add(cat)
+    session.flush()
     session.add_all([
-        Ingredient(name="Молоко", unit="мл", stock_qty=100, low_stock_threshold=500),
-        Ingredient(name="Зерно", unit="г", stock_qty=4000, low_stock_threshold=1000),
-        Ingredient(name="Салфетки", unit="шт", stock_qty=5, low_stock_threshold=0),
+        Product(name="Круассан", category_id=cat.id, kind="retail", price_tiyn=1000,
+                stock_qty=100, low_stock_threshold=500),
+        Product(name="Чизкейк", category_id=cat.id, kind="retail", price_tiyn=1000,
+                stock_qty=4000, low_stock_threshold=1000),
+        Product(name="Салфетки", category_id=cat.id, kind="retail", price_tiyn=1000,
+                stock_qty=5, low_stock_threshold=0),   # порог не задан — не следим
+        Product(name="Латте", category_id=cat.id, kind="prepared", price_tiyn=1000,
+                stock_qty=None, low_stock_threshold=500),  # не считается
     ])
     session.commit()
 
     stock = ds.dashboard(session, now=NOW).stock
-    assert [s.name for s in stock] == ["Молоко", "Зерно"]   # ближайшие к нулю первыми
-    assert stock[0].pct == 20 and stock[0].is_low
-    assert stock[1].pct == 100 and not stock[1].is_low
+    assert [s.name for s in stock] == ["Круассан", "Чизкейк"]  # ближайшие к нулю первыми
+    assert stock[0].is_low and not stock[1].is_low
 
 
 def test_dashboard_counts_orders_touched_by_refunds_not_refunds(session):

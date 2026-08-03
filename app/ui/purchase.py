@@ -1,14 +1,14 @@
 from nicegui import ui
-from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 
 from app.db import SessionLocal
-from app.models import Ingredient, StockMove
 from app.services import inventory_service as inv
 from app.timezone import to_almaty
-from app.ui.design import empty_state
+from app.ui.design import empty_state, money_tg, numpad
 from app.ui.guard import is_admin, require_user
 from app.ui.layout import cashier_header
+
+_CARD = ("background: var(--surface-card); border:1px solid var(--border-subtle);"
+         "border-radius:16px")
 
 
 @ui.page("/stock/purchase")
@@ -17,84 +17,82 @@ def purchase_page() -> None:
         return
     cashier_header()
 
-    ui.label("Приход товара").classes("text-2xl font-bold")
-
     with SessionLocal() as session:
-        ing_options = {
-            i.id: f"{i.name} ({i.unit})"
-            for i in session.scalars(select(Ingredient).where(Ingredient.is_active)).all()
+        options = {
+            r.product_id: (f"{r.name} · {r.stock_qty} шт" if r.tracked else r.name)
+            for r in inv.stock_rows(session)
         }
 
-    if not ing_options:
-        # Кнопка — только админу: /admin/stock закрыт require_admin, и кассир
-        # упёрся бы в «Доступ только для администратора».
-        if is_admin():
-            empty_state(
-                icon="inventory_2",
-                title="Ещё нет складских позиций",
-                hint="Приход оформляется на позицию склада — молоко, зерно, стаканы. "
-                     "Заведите их, и здесь появится форма прихода.",
-                action_label="Перейти в «Склад и тех-карты»",
-                action_icon="arrow_forward",
-                on_action=lambda: ui.navigate.to("/admin/stock"),
-            )
-        else:
-            empty_state(
-                icon="inventory_2",
-                title="Ещё нет складских позиций",
-                hint="Их заводит администратор в разделе «Склад и тех-карты». "
-                     "Попросите владельца добавить позиции — тогда приход можно будет оформить.",
-            )
-        return
+    with ui.column().classes("w-full gap-4 mx-auto").style("max-width:720px"):
+        ui.label("Приход товара").classes("text-2xl font-black")
 
-    sel_ing = ui.select(ing_options, label="Позиция склада")
-    qty = ui.number("Количество", value=0, min=1, format="%.0f")
-    total = ui.number("Сумма закупки, тг", value=0, min=0, format="%.0f")
+        if not options:
+            # Кнопка — только админу: /admin/menu закрыт require_admin, и кассир
+            # упёрся бы в «Доступ только для администратора».
+            hint = ("Приход оформляется на товар из меню — круассаны, снеки, "
+                    "бутылки. Заведите товары, и здесь появится форма прихода.")
+            if is_admin():
+                empty_state(icon="inventory_2", title="В меню ещё нет товаров", hint=hint,
+                            action_label="Перейти в «Меню и цены»",
+                            action_icon="arrow_forward",
+                            on_action=lambda: ui.navigate.to("/admin/menu"))
+            else:
+                empty_state(icon="inventory_2", title="В меню ещё нет товаров",
+                            hint="Товары заводит администратор в разделе «Меню и цены».")
+            return
 
-    history_box = ui.column().classes("w-full max-w-2xl gap-1 mt-4")
+        with ui.column().classes("w-full gap-3 p-4").style(_CARD):
+            product = ui.select(options, label="Товар", with_input=True) \
+                .props("outlined").classes("w-full")
+            qty = ui.number("Сколько штук пришло", value=0, min=1, format="%.0f") \
+                .props("readonly outlined").classes("w-full")
+            numpad(qty)
+            total = ui.number("Сумма закупки, тг", value=0, min=0, format="%.0f") \
+                .props("readonly outlined").classes("w-full")
+            numpad(total)
+            ui.label("Сумма нужна для расчёта закупочной цены и маржи. Можно "
+                     "оставить 0 — тогда прежняя цена сохранится.").classes("text-xs") \
+                .style("color: var(--text-secondary)")
+
+            def do_receive() -> None:
+                if not product.value:
+                    ui.notify("Выберите товар", color="red")
+                    return
+                if not qty.value or qty.value <= 0:
+                    ui.notify("Введите количество", color="red")
+                    return
+                try:
+                    with SessionLocal() as s:
+                        inv.receive_purchase(s, product.value, qty=round(qty.value),
+                                             total_cost_tiyn=round((total.value or 0) * 100))
+                except ValueError as e:
+                    ui.notify(str(e), color="red")
+                    return
+                ui.notify("Приход оформлен", color="green")
+                qty.value = 0
+                total.value = 0
+                refresh_history()
+
+            ui.button("Оформить приход", icon="local_shipping", on_click=do_receive) \
+                .props("no-caps").classes("w-full h-12")
+
+        history_box = ui.column().classes("w-full gap-2 p-4").style(_CARD)
 
     def refresh_history() -> None:
         history_box.clear()
         with history_box, SessionLocal() as session:
-            ui.label("Последние приходы").classes("text-xl")
-            moves = session.scalars(
-                select(StockMove).where(StockMove.kind == "purchase")
-                .order_by(StockMove.created_at.desc()).limit(10)
-            ).all()
+            ui.label("Последние приходы").classes("text-lg font-bold")
+            moves = inv.recent_moves(session, kind="purchase", limit=10)
             if not moves:
-                ui.label("Приходов ещё не было").classes("text-gray-500")
+                ui.label("Приходов ещё не было").classes("text-sm") \
+                    .style("color: var(--text-secondary)")
             for m in moves:
-                ing = session.get(Ingredient, m.ingredient_id)
-                cost = (m.cost_tiyn or 0) / 100
-                ui.label(
-                    f"{to_almaty(m.created_at):%d.%m %H:%M} — {ing.name}: "
-                    f"+{m.qty_delta} {ing.unit}, {cost:.2f} тг"
-                )
+                with ui.row().classes("w-full items-center gap-3 no-wrap"):
+                    ui.label(f"{to_almaty(m.created_at):%d.%m %H:%M}").classes("text-sm") \
+                        .style("color: var(--text-secondary); width:88px")
+                    ui.label(m.product_name).classes("flex-1 min-w-0 text-base truncate")
+                    ui.label(f"+{m.qty_delta} шт").classes("text-base font-bold")
+                    ui.label(money_tg(m.cost_tiyn or 0)).classes("text-sm") \
+                        .style("color: var(--text-secondary); width:96px").style("text-align:right")
 
-    def do_receive() -> None:
-        if not sel_ing.value:
-            ui.notify("Выберите позицию склада", color="red")
-            return
-        if not qty.value or qty.value <= 0:
-            ui.notify("Введите количество", color="red")
-            return
-        if total.value is None or total.value < 0:
-            ui.notify("Введите сумму закупки", color="red")
-            return
-        try:
-            with SessionLocal() as s:
-                inv.receive_purchase(
-                    s, sel_ing.value,
-                    qty=round(qty.value),
-                    total_cost_tiyn=round(total.value * 100),
-                )
-        except (ValueError, IntegrityError) as e:
-            ui.notify(str(e), color="red")
-            return
-        ui.notify("Приход оформлен", color="green")
-        qty.value = 0
-        total.value = 0
-        refresh_history()
-
-    ui.button("Оформить приход", on_click=do_receive)
     refresh_history()

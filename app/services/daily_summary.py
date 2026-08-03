@@ -68,37 +68,29 @@ def daily_summary_text(session: Session, *, now: datetime | None = None) -> str:
 
 
 def stock_remains_text(session: Session) -> list[str]:
-    """Остатки склада по разделам. Позиции ниже порога помечены «!».
+    """Остатки по категориям меню. Товары ниже порога помечены «!».
 
     Владельцу нужно видеть не только выручку, но и с чем кассир оставил точку:
-    закупку делают вечером, а не утром перед открытием.
+    закупку делают вечером, а не утром перед открытием. Товары без учёта
+    остатка (кофе из общих запасов) в сводку не попадают — считать там нечего.
     """
-    from app.models import Ingredient, StockCategory
+    from app.services.inventory_service import stock_rows
 
-    rows = session.scalars(
-        select(Ingredient).where(Ingredient.is_active).order_by(Ingredient.name)
-    ).all()
+    rows = [r for r in stock_rows(session) if r.tracked]
     if not rows:
         return []
-    sections = {c.id: c.name for c in session.scalars(
-        select(StockCategory).order_by(StockCategory.sort_order, StockCategory.name)).all()}
 
-    grouped: dict[int | None, list] = {}
-    for ing in rows:
-        key = ing.category_id if ing.category_id in sections else None
-        grouped.setdefault(key, []).append(ing)
+    grouped: dict[str, list] = {}
+    for row in rows:
+        grouped.setdefault(row.category, []).append(row)
 
     lines = ["", "Остатки склада:"]
-    order = [(cid, sections[cid]) for cid in sections if cid in grouped]
-    if None in grouped:
-        order.append((None, "Без раздела"))
-    for cid, name in order:
+    for name, items in grouped.items():
         lines.append(f"  {name}")
-        for ing in grouped[cid]:
-            low = ing.low_stock_threshold > 0 and ing.stock_qty < ing.low_stock_threshold
-            mark = " !" if low else ""
-            lines.append(f"    {ing.name}: {ing.stock_qty} {ing.unit}{mark}")
-    if any(i.low_stock_threshold > 0 and i.stock_qty < i.low_stock_threshold for i in rows):
+        for row in items:
+            mark = " !" if row.is_low else ""
+            lines.append(f"    {row.name}: {row.stock_qty} шт{mark}")
+    if any(r.is_low for r in rows):
         lines.append("  ! — ниже порога, пора закупать")
     return lines
 

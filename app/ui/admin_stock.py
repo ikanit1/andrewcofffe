@@ -1,12 +1,28 @@
+"""Склад: сколько штук каждого товара лежит на точке.
+
+Никаких ингредиентов и тех-карт — считается сам товар из меню. Остаток можно
+не вести вовсе: у кофе, который варят из общих запасов, количества не
+существует, и такой товар помечается «не считается».
+
+Правится здесь всё: остаток, порог предупреждения, закупочная цена, журнал
+движений. Продажу склад никогда не блокирует — остаток просто уходит в минус.
+"""
 from nicegui import ui
-from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 
 from app.db import SessionLocal
-from app.models import Ingredient, Product, RecipeItem, StockCategory
 from app.services import inventory_service as inv
-from app.ui.design import numpad
+from app.timezone import to_almaty
+from app.ui.design import confirm_with_pin, empty_state, money_tg, numpad
 from app.ui.layout import admin_header
+
+_CARD = ("background: var(--surface-card); border:1px solid var(--border-subtle);"
+         "border-radius:16px")
+_ADJUST_REASONS = {
+    "инвентаризация": "Инвентаризация (пересчёт)",
+    "списание": "Списание (порча, брак)",
+    "исправление ошибки": "Исправление ошибки ввода",
+    "прочее": "Прочее",
+}
 
 
 @ui.page("/admin/stock")
@@ -16,424 +32,294 @@ def admin_stock_page() -> None:
         return
     admin_header()
 
-    ui.label("Склад: позиции и тех-карты").classes("text-2xl font-bold")
+    state = {"query": "", "hidden": False, "only_tracked": False}
 
-    with ui.row().classes("gap-2"):
-        ui.button("Приход товара", icon="local_shipping",
-                  on_click=lambda: ui.navigate.to("/stock/purchase"))
-        ui.button("Разделы склада", icon="folder",
-                  on_click=lambda: _categories_dialog()).props("outline")
+    root = ui.column().classes("w-full gap-4 mx-auto").style("max-width:1000px")
 
-    # Поиск: на складе десятки позиций, и пролистывать их ради одной — долго.
-    with ui.row().classes("w-full max-w-3xl items-center gap-2 px-3 mt-2 rounded-xl") \
-            .style("background: var(--surface-card); "
-                   "border:1px solid var(--border-subtle); min-height:48px"):
-        ui.icon("search", size="20px").style("color: var(--text-secondary)")
-        search = ui.input(placeholder="Поиск по названию позиции") \
-            .props("borderless dense clearable").classes("flex-1")
-    search.on_value_change(lambda _: refresh_ingredients())
+    # ------------------------------------------------------------------
+    # действия
+    # ------------------------------------------------------------------
 
-    ing_container = ui.column().classes("w-full max-w-3xl gap-1")
-
-    def _query() -> str:
-        return (search.value or "").strip().lower()
-
-    def _categories_dialog() -> None:
-        """Разделы склада: добавить, переименовать, удалить."""
+    def _stock_dialog(row: inv.StockRow) -> None:
+        """Остаток товара: ввести фактическое количество или перестать считать."""
+        current = row.stock_qty or 0
         with ui.dialog() as dlg, ui.card().classes("gap-3 w-full max-w-md"):
-            ui.label("Разделы склада").classes("text-lg font-bold")
-            body = ui.column().classes("w-full gap-1")
-
-            def redraw() -> None:
-                body.clear()
-                with body, SessionLocal() as s:
-                    cats = s.scalars(select(StockCategory)
-                                     .order_by(StockCategory.sort_order,
-                                               StockCategory.name)).all()
-                    if not cats:
-                        ui.label("Разделов пока нет — позиции лежат общим списком") \
-                            .classes("text-sm").style("color: var(--text-secondary)")
-                    for c in cats:
-                        n = s.query(Ingredient).filter(
-                            Ingredient.category_id == c.id).count()
-                        with ui.row().classes("items-center gap-2 w-full no-wrap"):
-                            ui.label(c.name).classes("flex-1 font-medium")
-                            ui.label(f"{n}").classes("text-sm") \
-                                .style("color: var(--text-secondary)")
-                            ui.button(icon="edit",
-                                      on_click=lambda c=c: _rename_cat(c.id, c.name)) \
-                                .props("flat dense")
-                            ui.button(icon="delete",
-                                      on_click=lambda c=c, n=n: _delete_cat(c.id, c.name, n)) \
-                                .props("flat dense color=negative")
-
-            new_name = ui.input("Новый раздел").classes("w-full")
-
-            def add() -> None:
-                try:
-                    with SessionLocal() as s:
-                        inv.create_stock_category(s, new_name.value)
-                except ValueError as e:
-                    ui.notify(str(e), color="red")
-                    return
-                new_name.value = ""
-                redraw()
-                refresh_ingredients()
-
-            new_name.on("keydown.enter", lambda _: add())
-            with ui.row().classes("gap-2"):
-                ui.button("Добавить", icon="add", on_click=add)
-                ui.button("Закрыть", on_click=dlg.close).props("flat")
-            redraw()
-        dlg.open()
-
-    def _rename_cat(cat_id: int, name: str) -> None:
-        with ui.dialog() as dlg, ui.card().classes("gap-3 min-w-80"):
-            ui.label(f"Раздел «{name}»").classes("text-lg font-bold")
-            field = ui.input("Название", value=name).classes("w-full")
-
-            def confirm() -> None:
-                try:
-                    with SessionLocal() as s:
-                        inv.rename_stock_category(s, cat_id, field.value)
-                except ValueError as e:
-                    ui.notify(str(e), color="red")
-                    return
-                dlg.close()
-                ui.notify("Переименовано", color="green")
-                refresh_ingredients()
-
-            with ui.row().classes("gap-2"):
-                ui.button("Сохранить", on_click=confirm)
-                ui.button("Отмена", on_click=dlg.close).props("flat")
-        dlg.open()
-
-    def _delete_cat(cat_id: int, name: str, count: int) -> None:
-        with ui.dialog() as dlg, ui.card().classes("gap-3 min-w-80"):
-            ui.label(f"Удалить раздел «{name}»?").classes("text-lg font-bold")
-            if count:
-                ui.label(f"{count} позиц. перейдут в «Без раздела». Сами позиции "
-                         "и остатки не удаляются.").classes("text-sm") \
+            ui.label(f"Остаток: {row.name}").classes("text-lg font-bold")
+            if row.tracked:
+                ui.label(f"Сейчас в системе: {row.stock_qty} шт").classes("text-sm") \
                     .style("color: var(--text-secondary)")
             else:
-                ui.label("Раздел пустой.").classes("text-sm") \
+                ui.label("Сейчас товар не считается — введите количество, чтобы "
+                         "начать вести остаток.").classes("text-sm") \
                     .style("color: var(--text-secondary)")
-
-            def confirm() -> None:
-                try:
-                    with SessionLocal() as s:
-                        moved = inv.delete_stock_category(s, cat_id)
-                except ValueError as e:
-                    ui.notify(str(e), color="red")
-                    return
-                dlg.close()
-                ui.notify(f"Раздел удалён, позиций без раздела: {moved}", color="green")
-                refresh_ingredients()
-
-            with ui.row().classes("gap-2"):
-                ui.button("Удалить", on_click=confirm, color="negative")
-                ui.button("Отмена", on_click=dlg.close).props("flat")
-        dlg.open()
-
-    def _move_dialog(ing_id: int, name: str, current_id: int | None) -> None:
-        with ui.dialog() as dlg, ui.card().classes("gap-3 min-w-80"):
-            ui.label(f"Раздел для «{name}»").classes("text-lg font-bold")
-            with SessionLocal() as s:
-                opts = {c.id: c.name for c in s.scalars(
-                    select(StockCategory).order_by(StockCategory.name)).all()}
-            opts[0] = "— без раздела —"
-            sel = ui.select(opts, value=current_id or 0, label="Раздел").classes("w-full")
-
-            def confirm() -> None:
-                try:
-                    with SessionLocal() as s:
-                        inv.set_ingredient_category(s, ing_id, sel.value or None)
-                except ValueError as e:
-                    ui.notify(str(e), color="red")
-                    return
-                dlg.close()
-                refresh_ingredients()
-
-            with ui.row().classes("gap-2"):
-                ui.button("Сохранить", on_click=confirm)
-                ui.button("Отмена", on_click=dlg.close).props("flat")
-        dlg.open()
-
-    def refresh_ingredients() -> None:
-        ing_container.clear()
-        with ing_container, SessionLocal() as session:
-            rows = session.scalars(
-                select(Ingredient).where(Ingredient.is_active).order_by(Ingredient.name)
-            ).all()
-            if not rows:
-                ui.label("Позиций склада пока нет").style("color: var(--text-secondary)")
-                return
-            query = _query()
-            if query:
-                rows = [i for i in rows if query in i.name.lower()]
-                if not rows:
-                    with ui.column().classes("w-full items-center gap-2 py-10") \
-                            .style("color: var(--text-secondary);"
-                                   "background: var(--surface-card);"
-                                   "border:1px dashed var(--border-default);"
-                                   "border-radius:16px"):
-                        ui.icon("search_off", size="30px")
-                        ui.label(f"Ничего не найдено по «{search.value}»")
-                    return
-            cats = {c.id: c.name for c in session.scalars(
-                select(StockCategory).order_by(StockCategory.sort_order,
-                                               StockCategory.name)).all()}
-            # Группируем по разделам; «Без раздела» показываем последним
-            groups: dict = {cid: [] for cid in cats}
-            groups[None] = []
-            for i in rows:
-                groups.setdefault(i.category_id if i.category_id in cats else None,
-                                  []).append(i)
-            order = [(cid, cats[cid]) for cid in cats] + [(None, "Без раздела")]
-
-            for cid, cname in order:
-                items = groups.get(cid) or []
-                if not items:
-                    continue
-                if len(cats) or cid is not None:
-                    with ui.row().classes("w-full items-baseline gap-2 mt-2"):
-                        ui.label(cname).classes("text-xs uppercase tracking-wider") \
-                            .style("color: var(--text-secondary)")
-                        ui.label(f"{len(items)}").classes("text-xs") \
-                            .style("color: var(--text-muted)")
-                _render_items(items)
-
-    def _render_items(rows) -> None:
-            for i in rows:
-                low = i.low_stock_threshold > 0 and i.stock_qty < i.low_stock_threshold
-                with ui.card().classes("w-full p-3 gap-2"):
-                    with ui.row().classes("items-center gap-3 w-full no-wrap"):
-                        with ui.column().classes("gap-0 flex-1 min-w-0"):
-                            ui.label(i.name).classes("text-base font-bold leading-tight")
-                            ui.label(f"порог {i.low_stock_threshold} {i.unit}").classes("text-xs") \
-                                .style("color: var(--text-secondary)")
-                        with ui.column().classes("gap-0 items-end"):
-                            ui.label(f"{i.stock_qty} {i.unit}").classes("text-lg font-black") \
-                                .style("color: var(--status-danger)" if low else "")
-                            if low:
-                                ui.label("на исходе").classes("text-xs") \
-                                    .style("color: var(--status-danger)")
-                        ui.button("Остаток", icon="tune",
-                                  on_click=lambda i=i: _adjust_dialog(i.id, i.name, i.unit,
-                                                                      i.stock_qty)) \
-                            .props("flat dense")
-                        ui.button(icon="edit",
-                                  on_click=lambda i=i: _edit_dialog(i.id, i.name, i.unit,
-                                                                    i.low_stock_threshold)) \
-                            .props("flat dense").tooltip("Название, единица, порог")
-                        ui.button(icon="folder",
-                                  on_click=lambda i=i: _move_dialog(i.id, i.name,
-                                                                    i.category_id)) \
-                            .props("flat dense").tooltip("Перенести в раздел")
-                        ui.button(icon="visibility_off",
-                                  on_click=lambda i=i: _hide(i.id, i.name)) \
-                            .props("flat dense color=negative").tooltip("Убрать из списка")
-
-    def _adjust_dialog(ing_id: int, name: str, unit: str, current: int) -> None:
-        """Пересчёт остатка: вводим фактическое количество, разница уходит в журнал."""
-        with ui.dialog() as dlg, ui.card().classes("gap-3 min-w-80"):
-            ui.label(f"Остаток: {name}").classes("text-lg font-bold")
-            ui.label(f"Сейчас в системе: {current} {unit}").classes("text-sm") \
-                .style("color: var(--text-secondary)")
-            qty = ui.number(f"Фактически на складе, {unit}", value=current, min=0,
-                            format="%.0f").props("readonly").classes("w-full")
-            diff_label = ui.label("").classes("text-sm font-bold")
+            qty = ui.number("Фактически на складе, шт", value=current, min=0,
+                            format="%.0f").props("readonly outlined").classes("w-full")
+            diff = ui.label("").classes("text-sm font-bold")
 
             def show_diff() -> None:
+                if not row.tracked:
+                    diff.set_text(f"Начнём считать с {int(qty.value or 0)} шт")
+                    diff.style("color: var(--text-secondary)")
+                    return
                 d = int(qty.value or 0) - current
-                if d == 0:
-                    diff_label.set_text("Без изменений")
-                    diff_label.style("color: var(--text-secondary)")
-                else:
-                    diff_label.set_text(f"Изменение: {d:+d} {unit}")
-                    diff_label.style("color: var(--status-warning)")
+                diff.set_text("Без изменений" if d == 0 else f"Изменение: {d:+d} шт")
+                diff.style("color: var(--text-secondary)" if d == 0
+                           else "color: var(--status-warning)")
 
             numpad(qty, on_change=show_diff)
             show_diff()
-            reason = ui.select(
-                {"инвентаризация": "Инвентаризация (пересчёт)",
-                 "списание": "Списание (порча, брак)",
-                 "исправление ошибки": "Исправление ошибки ввода",
-                 "прочее": "Прочее"},
-                value="инвентаризация", label="Причина").classes("w-full")
+            reason = ui.select(_ADJUST_REASONS, value="инвентаризация",
+                               label="Причина").classes("w-full")
 
-            def confirm() -> None:
+            def save() -> None:
                 try:
                     with SessionLocal() as s:
-                        inv.adjust_stock(s, ing_id, new_qty=int(qty.value or 0),
-                                         note=reason.value)
+                        inv.set_stock(s, row.product_id, new_qty=int(qty.value or 0),
+                                      note=reason.value)
                 except ValueError as e:
                     ui.notify(str(e), color="red")
                     return
                 dlg.close()
-                ui.notify(f"Остаток «{name}» обновлён", color="green")
-                refresh_ingredients()
+                ui.notify(f"Остаток «{row.name}» обновлён", color="green")
+                refresh()
 
-            with ui.row().classes("gap-2"):
-                ui.button("Сохранить", on_click=confirm)
-                ui.button("Отмена", on_click=dlg.close).props("flat")
+            def stop_tracking() -> None:
+                with SessionLocal() as s:
+                    inv.set_stock(s, row.product_id, new_qty=None)
+                dlg.close()
+                ui.notify(f"«{row.name}» больше не считается", color="green")
+                refresh()
+
+            with ui.row().classes("gap-2 flex-wrap"):
+                ui.button("Сохранить", on_click=save).props("no-caps")
+                if row.tracked:
+                    ui.button("Не считать этот товар", on_click=stop_tracking) \
+                        .props("flat no-caps color=negative")
+                ui.button("Отмена", on_click=dlg.close).props("flat no-caps")
         dlg.open()
 
-    def _edit_dialog(ing_id: int, name: str, unit: str, threshold: int) -> None:
-        with ui.dialog() as dlg, ui.card().classes("gap-3 min-w-80"):
-            ui.label(f"Позиция: {name}").classes("text-lg font-bold")
-            name_in = ui.input("Название", value=name).classes("w-full")
-            unit_in = ui.select({"г": "граммы", "мл": "миллилитры", "шт": "штуки"},
-                                value=unit, label="Единица").classes("w-full")
-            thr_in = ui.number("Порог «на исходе»", value=threshold, min=0,
-                               format="%.0f").props("readonly").classes("w-full")
-            numpad(thr_in)
-            ui.label("Порог 0 — уведомления по этой позиции отключены").classes("text-xs") \
+    def _settings_dialog(row: inv.StockRow) -> None:
+        """Порог предупреждения и закупочная цена."""
+        with ui.dialog() as dlg, ui.card().classes("gap-3 w-full max-w-md"):
+            ui.label(f"Настройки: {row.name}").classes("text-lg font-bold")
+            thr = ui.number("Предупреждать, когда остаток ниже", value=row.low_stock_threshold,
+                            min=0, format="%.0f").props("readonly outlined").classes("w-full")
+            numpad(thr)
+            ui.label("0 — не предупреждать по этому товару").classes("text-xs") \
                 .style("color: var(--text-secondary)")
+            cost = ui.number("Закупочная цена за штуку, тг", value=row.cost_tiyn / 100,
+                             min=0, format="%.0f").props("readonly outlined").classes("w-full")
+            numpad(cost)
+            margin = ui.label("").classes("text-sm")
 
-            def confirm() -> None:
+            def show_margin() -> None:
+                buy = round((cost.value or 0) * 100)
+                if not buy:
+                    margin.set_text("Без закупочной цены маржа в отчётах считается "
+                                    "равной всей выручке")
+                    margin.style("color: var(--status-warning)")
+                    return
+                profit = row.price_tiyn - buy
+                margin.set_text(f"Продаём за {money_tg(row.price_tiyn)} — "
+                                f"прибыль {money_tg(profit)} со штуки")
+                margin.style("color: var(--status-success)" if profit > 0
+                             else "color: var(--status-danger)")
+
+            cost.on_value_change(lambda _: show_margin())
+            show_margin()
+
+            def save() -> None:
                 try:
                     with SessionLocal() as s:
-                        inv.update_ingredient(s, ing_id, name=name_in.value,
-                                              unit=unit_in.value,
-                                              low_stock_threshold=int(thr_in.value or 0))
+                        inv.update_product_stock_settings(
+                            s, row.product_id,
+                            low_stock_threshold=int(thr.value or 0),
+                            cost_tiyn=round((cost.value or 0) * 100),
+                        )
                 except ValueError as e:
                     ui.notify(str(e), color="red")
                     return
                 dlg.close()
                 ui.notify("Сохранено", color="green")
-                refresh_ingredients()
-                reload_ing_options()
+                refresh()
 
             with ui.row().classes("gap-2"):
-                ui.button("Сохранить", on_click=confirm)
-                ui.button("Отмена", on_click=dlg.close).props("flat")
+                ui.button("Сохранить", on_click=save).props("no-caps")
+                ui.button("Отмена", on_click=dlg.close).props("flat no-caps")
         dlg.open()
 
-    def _hide(ing_id: int, name: str) -> None:
-        with ui.dialog() as dlg, ui.card().classes("gap-3 min-w-80"):
-            ui.label(f"Убрать «{name}» из списка?").classes("text-lg font-bold")
-            ui.label("Позиция скрывается, но не удаляется: на неё ссылаются прошлые "
-                     "движения склада и тех-карты.").classes("text-sm") \
-                .style("color: var(--text-secondary)")
+    def _history_dialog(row: inv.StockRow) -> None:
+        """Журнал движений по товару: приходы, продажи, ручные правки."""
+        with SessionLocal() as s:
+            moves = inv.recent_moves(s, product_id=row.product_id, limit=50)
 
-            def confirm() -> None:
+        def clear() -> None:
+            def do_clear() -> None:
                 with SessionLocal() as s:
-                    inv.set_ingredient_active(s, ing_id, False)
+                    n = inv.clear_moves(s, row.product_id)
+                ui.notify(f"Удалено записей: {n}", color="green")
                 dlg.close()
-                ui.notify(f"«{name}» убрана из списка", color="green")
-                refresh_ingredients()
-                reload_ing_options()
 
-            with ui.row().classes("gap-2"):
-                ui.button("Убрать", on_click=confirm, color="negative")
-                ui.button("Отмена", on_click=dlg.close).props("flat")
-        dlg.open()
-
-    def reload_ing_options() -> None:
-        with SessionLocal() as session:
-            sel_ing.set_options(
-                {
-                    i.id: f"{i.name} ({i.unit})"
-                    for i in session.scalars(select(Ingredient).where(Ingredient.is_active)).all()
-                }
+            confirm_with_pin(
+                title=f"Очистить журнал «{row.name}»",
+                question="Остаток останется прежним, пропадёт только история движений.",
+                action_label="Очистить журнал", on_confirm=do_clear,
             )
 
-    with ui.expansion("Добавить позицию склада").classes("w-full max-w-3xl"):
-        n = ui.input("Название (напр. Молоко)").classes("w-full")
-        u = ui.select({"г": "граммы", "мл": "миллилитры", "шт": "штуки"},
-                      label="Единица", value="мл").classes("w-full")
-        t = ui.number(label="Порог низкого остатка", value=0, min=0,
-                      format="%.0f").props("readonly").classes("w-full")
-        numpad(t)
+        with ui.dialog() as dlg, ui.card().classes("gap-3 w-full max-w-lg"):
+            with ui.row().classes("w-full items-baseline justify-between gap-2"):
+                ui.label(f"Движения: {row.name}").classes("text-lg font-bold")
+                if moves:
+                    ui.button("Очистить", on_click=clear) \
+                        .props("flat dense no-caps color=negative")
+            if not moves:
+                ui.label("Движений по этому товару ещё не было").classes("text-sm") \
+                    .style("color: var(--text-secondary)")
+            with ui.column().classes("w-full gap-1").style("max-height:420px;overflow:auto"):
+                for m in moves:
+                    with ui.row().classes("w-full items-center gap-3 no-wrap"):
+                        ui.label(f"{to_almaty(m.created_at):%d.%m %H:%M}").classes("text-xs") \
+                            .style("color: var(--text-secondary); width:84px")
+                        ui.label(m.kind_label).classes("text-sm").style("width:110px")
+                        ui.label(f"{m.qty_delta:+d} шт").classes("text-sm font-bold") \
+                            .style("color: var(--status-success)" if m.qty_delta > 0
+                                   else "color: var(--status-danger)")
+                        ui.label(m.note or "").classes("flex-1 min-w-0 text-xs truncate") \
+                            .style("color: var(--text-secondary)")
+            ui.button("Закрыть", on_click=dlg.close).props("flat no-caps")
+        dlg.open()
 
-        def add_ing() -> None:
-            if not n.value:
+    # ------------------------------------------------------------------
+    # отрисовка
+    # ------------------------------------------------------------------
+
+    def _row_card(row: inv.StockRow) -> None:
+        opacity = "1" if row.is_active else ".55"
+        with ui.row().classes("w-full items-center gap-3 no-wrap p-3") \
+                .style(f"{_CARD}; opacity:{opacity}"):
+            with ui.column().classes("gap-0 flex-1 min-w-0"):
+                with ui.row().classes("items-center gap-2 flex-wrap"):
+                    ui.label(row.name).classes("text-base font-bold leading-tight")
+                    if not row.is_active:
+                        ui.badge("убран из меню").props("rounded") \
+                            .style("background: var(--surface-sunken); "
+                                   "color: var(--text-secondary)")
+                threshold = (f"порог {row.low_stock_threshold} шт"
+                             if row.low_stock_threshold else "без порога")
+                cost = (f"закупка {money_tg(row.cost_tiyn)}" if row.cost_tiyn
+                        else "закупочная цена не задана")
+                ui.label(f"{threshold} · {cost}").classes("text-xs") \
+                    .style("color: var(--text-secondary)")
+            with ui.column().classes("gap-0 items-end").style("width:104px"):
+                if not row.tracked:
+                    ui.label("—").classes("text-lg font-black") \
+                        .style("color: var(--text-muted)")
+                    ui.label("не считается").classes("text-xs") \
+                        .style("color: var(--text-muted)")
+                else:
+                    ui.label(f"{row.stock_qty} шт").classes("text-lg font-black") \
+                        .style("color: var(--status-danger)" if row.is_low else "")
+                    if row.is_low:
+                        ui.label("на исходе").classes("text-xs") \
+                            .style("color: var(--status-danger)")
+            ui.button("Остаток", icon="tune", on_click=lambda r=row: _stock_dialog(r)) \
+                .props("flat dense no-caps")
+            ui.button(icon="notifications", on_click=lambda r=row: _settings_dialog(r)) \
+                .props("flat dense").tooltip("Порог предупреждения и закупочная цена")
+            ui.button(icon="history", on_click=lambda r=row: _history_dialog(r)) \
+                .props("flat dense").tooltip("Движения по товару")
+
+    def refresh() -> None:
+        box.clear()
+        with box, SessionLocal() as session:
+            rows = inv.stock_rows(session, include_hidden=state["hidden"],
+                                  query=state["query"],
+                                  only_tracked=state["only_tracked"])
+            total = inv.stock_value_tiyn(session)
+            if not rows:
+                if state["query"] or state["only_tracked"]:
+                    empty_state(icon="search_off", title="Ничего не найдено",
+                                hint="Снимите поиск или фильтр «только учитываемые».")
+                else:
+                    empty_state(
+                        icon="inventory_2", title="В меню ещё нет товаров",
+                        hint="Склад считается по товарам меню — заведите их, "
+                             "и здесь появятся остатки.",
+                        action_label="Перейти в «Меню и цены»", action_icon="arrow_forward",
+                        on_action=lambda: ui.navigate.to("/admin/menu"))
                 return
-            with SessionLocal() as s:
-                try:
-                    s.add(
-                        Ingredient(name=n.value, unit=u.value, low_stock_threshold=int(t.value or 0))
-                    )
-                    s.commit()
-                except IntegrityError as e:
-                    s.rollback()
-                    ui.notify(str(e), color="red")
-                    return
-            n.value = ""
-            refresh_ingredients()
-            reload_ing_options()
 
-        ui.button("Добавить", on_click=add_ing)
+            tracked = [r for r in rows if r.tracked]
+            low = [r for r in tracked if r.is_low]
+            with ui.row().classes("w-full items-center gap-4 flex-wrap p-3") \
+                    .style(_CARD):
+                _summary("Считаем товаров", str(len(tracked)))
+                _summary("На исходе", str(len(low)),
+                         danger=bool(low))
+                _summary("Склад на сумму", money_tg(total))
 
-    ui.separator()
-    ui.label("Тех-карта товара").classes("text-xl")
-    recipe_container = ui.column().classes("w-full max-w-3xl gap-1")
+            groups: dict[str, list] = {}
+            for row in rows:
+                groups.setdefault(row.category, []).append(row)
+            for name, items in groups.items():
+                with ui.row().classes("w-full items-baseline gap-2 mt-2"):
+                    ui.label(name).classes("text-xs uppercase tracking-wider") \
+                        .style("color: var(--text-secondary)")
+                    ui.label(f"{len(items)}").classes("text-xs") \
+                        .style("color: var(--text-muted)")
+                for row in items:
+                    _row_card(row)
 
-    with SessionLocal() as session:
-        prod_options = {
-            p.id: p.name
-            for p in session.scalars(
-                select(Product).where(Product.kind == "prepared", Product.is_active)
-            ).all()
-        }
-        ing_options = {
-            i.id: f"{i.name} ({i.unit})"
-            for i in session.scalars(select(Ingredient).where(Ingredient.is_active)).all()
-        }
+    def _summary(label: str, value: str, *, danger: bool = False) -> None:
+        with ui.column().classes("gap-0"):
+            ui.label(label).classes("text-xs").style("color: var(--text-secondary)")
+            ui.label(value).classes("text-lg font-black") \
+                .style("color: var(--status-danger)" if danger else "")
 
-    sel_product = ui.select(prod_options, label="Товар", on_change=lambda e: refresh_recipe())
+    # ------------------------------------------------------------------
+    # разметка
+    # ------------------------------------------------------------------
 
-    def refresh_recipe() -> None:
-        recipe_container.clear()
-        if not sel_product.value:
-            return
-        with recipe_container, SessionLocal() as session:
-            items = session.scalars(
-                select(RecipeItem).where(RecipeItem.product_id == sel_product.value)
-            ).all()
-            for it in items:
-                ing = session.get(Ingredient, it.ingredient_id)
-                with ui.row().classes("items-center gap-4"):
-                    ui.label(f"{ing.name}: {it.qty} {ing.unit}")
+    with root:
+        with ui.row().classes("w-full items-end justify-between gap-4 flex-wrap"):
+            with ui.column().classes("gap-0"):
+                ui.label("Склад").classes("text-2xl font-black leading-tight")
+                ui.label("Сколько штук товара лежит на точке. Продажи списывают "
+                         "остаток сами.").classes("text-sm") \
+                    .style("color: var(--text-secondary)")
+            with ui.row().classes("gap-2 flex-wrap"):
+                ui.button("Приход товара", icon="local_shipping",
+                          on_click=lambda: ui.navigate.to("/stock/purchase")) \
+                    .props("outline no-caps").classes("h-12")
+                ui.button("Меню и цены", icon="restaurant_menu",
+                          on_click=lambda: ui.navigate.to("/admin/menu")) \
+                    .props("outline no-caps").classes("h-12")
 
-                    def remove(item_id=it.id) -> None:
-                        with SessionLocal() as s:
-                            obj = s.get(RecipeItem, item_id)
-                            if obj:
-                                s.delete(obj)
-                                s.commit()
-                        refresh_recipe()
+        with ui.row().classes("w-full items-center gap-3 flex-wrap"):
+            with ui.row().classes("items-center gap-2 px-3 rounded-xl flex-1") \
+                    .style(f"{_CARD}; min-height:48px; min-width:240px"):
+                ui.icon("search", size="20px").style("color: var(--text-secondary)")
+                search = ui.input(placeholder="Поиск по названию товара") \
+                    .props("borderless dense clearable").classes("flex-1")
+            tracked_switch = ui.switch("Только учитываемые")
+            hidden_switch = ui.switch("Показывать убранные из меню")
 
-                    ui.button("Удалить", on_click=remove, color="red")
+        def _on_search(_) -> None:
+            state["query"] = (search.value or "").strip()
+            refresh()
 
-    with ui.row().classes("items-end gap-4"):
-        sel_ing = ui.select(ing_options, label="Ингредиент")
-        qty = ui.number(label="Кол-во на порцию", value=1, min=1, format="%.0f")
+        def _on_tracked(_) -> None:
+            state["only_tracked"] = bool(tracked_switch.value)
+            refresh()
 
-        def add_line() -> None:
-            if not (sel_product.value and sel_ing.value):
-                ui.notify("Выберите товар и ингредиент", color="red")
-                return
-            if qty.value is None or qty.value <= 0:
-                ui.notify("Введите количество", color="red")
-                return
-            with SessionLocal() as s:
-                try:
-                    s.add(
-                        RecipeItem(
-                            product_id=sel_product.value,
-                            ingredient_id=sel_ing.value,
-                            qty=round(qty.value),
-                        )
-                    )
-                    s.commit()
-                except IntegrityError as e:
-                    s.rollback()
-                    ui.notify(str(e), color="red")
-                    return
-            refresh_recipe()
+        def _on_hidden(_) -> None:
+            state["hidden"] = bool(hidden_switch.value)
+            refresh()
 
-        ui.button("Добавить в тех-карту", on_click=add_line)
+        search.on_value_change(_on_search)
+        tracked_switch.on_value_change(_on_tracked)
+        hidden_switch.on_value_change(_on_hidden)
 
-    refresh_ingredients()
+        box = ui.column().classes("w-full gap-2")
+
+    refresh()

@@ -19,10 +19,15 @@ class Product(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str]
     category_id: Mapped[int] = mapped_column(ForeignKey("categories.id"))
-    kind: Mapped[str]  # "prepared" (по тех-карте) | "retail" (штучный)
+    kind: Mapped[str]  # "prepared" (готовится) | "retail" (штучный)
     price_tiyn: Mapped[int]
-    # для retail-товара — складская позиция, которая списывается поштучно
-    ingredient_id: Mapped[int | None] = mapped_column(ForeignKey("ingredients.id"), default=None)
+    # Остаток в штуках самого товара. None — «не считаем»: у кофе, который варят
+    # из общих запасов, количества не существует, и ноль там врал бы сильнее,
+    # чем пустая ячейка. Заполнили число — товар начинает списываться продажами.
+    stock_qty: Mapped[int | None] = mapped_column(default=None)
+    low_stock_threshold: Mapped[int] = mapped_column(default=0)  # 0 = не предупреждать
+    low_stock_notified: Mapped[bool] = mapped_column(default=False)
+    cost_tiyn: Mapped[int] = mapped_column(default=0)  # закупочная цена за штуку
     sort_order: Mapped[int] = mapped_column(default=0)
     is_active: Mapped[bool] = mapped_column(default=True)
     # Фото товара хранится в БД (попадает в бэкап). Блоб отложенный — не грузится
@@ -48,17 +53,6 @@ class Modifier(Base):
     name: Mapped[str]
     price_delta_tiyn: Mapped[int] = mapped_column(default=0)
     is_active: Mapped[bool] = mapped_column(default=True)
-
-
-class ModifierItem(Base):
-    """Списание ингредиентов, которое добавляет модификатор (сироп +30 мл и т.п.)."""
-
-    __tablename__ = "modifier_items"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    modifier_id: Mapped[int] = mapped_column(ForeignKey("modifiers.id"))
-    ingredient_id: Mapped[int] = mapped_column(ForeignKey("ingredients.id"))
-    qty: Mapped[int]  # в базовых единицах ингредиента (г/мл/шт)
 
 
 class ProductModifierGroup(Base):

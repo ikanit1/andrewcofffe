@@ -152,7 +152,8 @@ def admin_dashboard_page() -> None:
         alerts: list[tuple[str, str, str]] = []  # (иконка, текст, статус)
         for s in [s for s in dash.stock if s.is_low][:4]:
             alerts.append(("inventory_2",
-                           f"{s.name} — {s.stock_qty} из {s.threshold} {s.unit}", "warning"))
+                           f"{s.name} — {s.stock_qty} из {s.low_stock_threshold} шт",
+                           "warning"))
         if dash.refunded_orders_count:
             alerts.append(("undo",
                            f"{checks_word(dash.refunded_orders_count)} с возвратом "
@@ -401,10 +402,11 @@ def admin_dashboard_page() -> None:
                 _muted("Пороги остатков не заданы — следить не за чем")
                 return
             for s in dash.stock:
+                pct = min(100, max(0, round(s.stock_qty / s.low_stock_threshold * 100)))
                 if not s.is_low:
                     color, note, note_color = ("var(--status-success)", "в норме",
                                                "var(--text-secondary)")
-                elif s.pct < 50:
+                elif pct < 50:
                     color = note_color = "var(--status-danger)"
                     note = "ниже порога"
                 else:
@@ -413,9 +415,9 @@ def admin_dashboard_page() -> None:
                 with ui.column().classes("w-full gap-1"):
                     with ui.row().classes("w-full items-baseline gap-2 no-wrap"):
                         ui.label(s.name).classes("flex-1 min-w-0 text-base truncate")
-                        ui.label(f"{s.stock_qty} / {s.threshold} {s.unit}") \
+                        ui.label(f"{s.stock_qty} / {s.low_stock_threshold} шт") \
                             .classes("text-sm font-bold")
-                    _progress(s.pct, color, height=7)
+                    _progress(pct, color, height=7)
                     ui.label(note).classes("text-xs").style(f"color: {note_color}")
 
     # ---------- последние 7 дней ----------

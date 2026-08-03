@@ -4,15 +4,12 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models import (
-    Ingredient,
     Modifier,
-    ModifierItem,
     Order,
     OrderItem,
     OrderItemModifier,
     Payment,
     Product,
-    RecipeItem,
     Refund,
     RefundItem,
     User,
@@ -122,28 +119,16 @@ def _next_order_number(session: Session, shift_id: int) -> int:
 
 
 def _stock_note(session: Session, product: Product) -> str:
-    """Остаток по товару для уведомления, если он вообще считается.
+    """Остаток по товару для уведомления — только если товар вообще считается.
 
-    Три разных случая, и молчать о них нельзя — именно из-за молчания долго
-    не замечали, что часть товаров продаётся, а склад не меняется:
-      • штучный с привязкой — показываем остаток и предупреждаем про минус;
-      • по тех-карте — остаток не одна цифра, отсылаем к складу;
-      • ничего не настроено — прямо говорим, что списания не было.
+    Про товары без учёта молчим: у кофе из общих запасов количества нет, и
+    приписка «склад не списан» к каждой чашке была бы шумом, а не сигналом.
     """
-    if product.kind == "retail":
-        if product.ingredient_id is None:
-            return " ⚠ склад не списан: товар не привязан к складу"
-        ing = session.get(Ingredient, product.ingredient_id)
-        if ing is None:
-            return " ⚠ склад не списан: позиция склада не найдена"
-        if ing.stock_qty < 0:
-            return f" ⚠ остаток {ing.stock_qty} {ing.unit} — продано больше, чем было"
-        return f" (остаток {ing.stock_qty} {ing.unit})"
-    has_recipe = session.query(RecipeItem).filter(
-        RecipeItem.product_id == product.id).count() > 0
-    if not has_recipe:
-        return " ⚠ склад не списан: нет тех-карты"
-    return ""
+    if product.stock_qty is None:
+        return ""
+    if product.stock_qty < 0:
+        return f" ⚠ остаток {product.stock_qty} шт — продано больше, чем было"
+    return f" (остаток {product.stock_qty} шт)"
 
 
 def _sale_notification_text(session: Session, order: Order, resolved,
@@ -287,26 +272,17 @@ def create_sale(
 
 
 def _deduct_stock(session: Session, product: Product, mods, qty: int, order_id: int) -> None:
-    """Списание по тех-карте (prepared) или по привязке (retail) + модификаторы."""
-    def move(ingredient_id: int, per_unit_qty: int) -> None:
-        ing = session.get(Ingredient, ingredient_id)
-        total_qty = per_unit_qty * qty
-        apply_move(
-            session, ingredient_id,
-            qty_delta=-total_qty, kind="sale",
-            cost_tiyn=round(ing.avg_cost_tiyn * total_qty),
-            ref_type="order", ref_id=order_id, commit=False,
-        )
+    """Списание проданных штук. Товары без учёта остатка пропускаются самим apply_move.
 
-    if product.kind == "prepared":
-        for r in session.scalars(select(RecipeItem).where(RecipeItem.product_id == product.id)).all():
-            move(r.ingredient_id, r.qty)
-    elif product.kind == "retail" and product.ingredient_id is not None:
-        move(product.ingredient_id, 1)
-
-    for m in mods:
-        for mi in session.scalars(select(ModifierItem).where(ModifierItem.modifier_id == m.id)).all():
-            move(mi.ingredient_id, mi.qty)
+    Продажа при этом не блокируется никогда: остаток уходит в минус, и это видно
+    на складе и в уведомлении — но чек касса обязана пробить.
+    """
+    apply_move(
+        session, product.id,
+        qty_delta=-qty, kind="sale",
+        cost_tiyn=(product.cost_tiyn or 0) * qty,
+        ref_type="order", ref_id=order_id, commit=False,
+    )
 
 
 def refund_sale(
@@ -360,10 +336,12 @@ def refund_sale(
             it.refunded_qty += q
             session.add(RefundItem(refund_id=refund.id, order_item_id=item_id, qty=q,
                                    amount_tiyn=item_amount))
+            # Штучный товар возвращается на полку; приготовленный вылить обратно
+            # нельзя, поэтому его остаток не восстанавливается.
             product = session.get(Product, it.product_id) if it.product_id else None
-            if product is not None and product.kind == "retail" and product.ingredient_id is not None:
+            if product is not None and product.kind == "retail":
                 apply_move(
-                    session, product.ingredient_id,
+                    session, product.id,
                     qty_delta=q, kind="refund",
                     ref_type="order", ref_id=order_id, commit=False,
                 )

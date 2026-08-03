@@ -2,12 +2,10 @@ from app.models.catalog import (
     Category,
     Modifier,
     ModifierGroup,
-    ModifierItem,
     Product,
     ProductModifierGroup,
 )
-from app.models.inventory import (Ingredient, RecipeItem, StockCategory,
-                                  StockMove)
+from app.models.inventory import StockMove
 from app.models.kaspi import KaspiSettings
 from app.models.notifications import NotificationOutbox
 from app.models.orders import Order, OrderItem, OrderItemModifier
@@ -18,11 +16,9 @@ from app.models.users import User
 __all__ = [
     "CashCollection",
     "Category",
-    "Ingredient",
     "KaspiSettings",
     "Modifier",
     "ModifierGroup",
-    "ModifierItem",
     "NotificationOutbox",
     "Order",
     "OrderItem",
@@ -30,11 +26,9 @@ __all__ = [
     "Payment",
     "Product",
     "ProductModifierGroup",
-    "RecipeItem",
     "Refund",
     "RefundItem",
     "Shift",
-    "StockCategory",
     "StockMove",
     "User",
 ]

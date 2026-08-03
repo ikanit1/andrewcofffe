@@ -4,7 +4,8 @@ from datetime import date, datetime, timedelta, timezone
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models import Category, Ingredient, Order, OrderItem, Payment, Product, Refund, User
+from app.models import Category, Order, OrderItem, Payment, Product, Refund, User
+from app.services import inventory_service as inv
 from app.services import reporting_service as rs
 from app.services import shift_service as ss
 from app.timezone import now_almaty, to_almaty, today_bounds_utc
@@ -58,12 +59,11 @@ def today_summary(session: Session, *, now: datetime | None = None) -> TodaySumm
     )
 
 
-def low_stock_ingredients(session: Session) -> list[Ingredient]:
-    return list(session.scalars(
-        select(Ingredient)
-        .where(Ingredient.is_active, Ingredient.stock_qty < Ingredient.low_stock_threshold)
-        .order_by(Ingredient.name)
-    ).all())
+def low_stock_products(session: Session) -> list[Product]:
+    """Товары на исходе — для кассы и дашборда."""
+    from app.services.inventory_service import low_stock_products as _low
+
+    return _low(session)
 
 
 # --------------------------------------------------------------------------
@@ -130,24 +130,6 @@ class MethodRow:
 
 
 @dataclass(frozen=True)
-class StockRow:
-    name: str
-    unit: str
-    stock_qty: int
-    threshold: int
-
-    @property
-    def pct(self) -> int:
-        if self.threshold <= 0:
-            return 100
-        return min(100, max(0, round(self.stock_qty / self.threshold * 100)))
-
-    @property
-    def is_low(self) -> bool:
-        return self.stock_qty < self.threshold
-
-
-@dataclass(frozen=True)
 class Dashboard:
     day: date
     now: datetime                     # местное время сборки снимка
@@ -163,7 +145,7 @@ class Dashboard:
     recent: tuple[rs.Receipt, ...]
     cash: ss.CashBreakdown | None
     methods: tuple[MethodRow, ...]
-    stock: tuple[StockRow, ...]
+    stock: tuple[inv.StockRow, ...]
     week: tuple[rs.DayRow, ...]
 
     @property
@@ -229,23 +211,15 @@ def _methods(session: Session, period: rs.Period) -> list[MethodRow]:
     return result
 
 
-def _stock_rows(session: Session, limit: int) -> list[StockRow]:
-    """Позиции с заданным порогом, ближайшие к нулю первыми.
+def _stock_rows(session: Session, limit: int) -> list[inv.StockRow]:
+    """Товары, за остатком которых следят, ближайшие к нулю первыми.
 
-    Позиции без порога (threshold = 0) пропускаем: отслеживание по ним выключено
-    владельцем, и показывать их «в норме» значило бы обещать контроль, которого нет.
+    Товары без учёта и без порога пропускаем: следить за ними владелец не просил,
+    и «в норме» напротив кофе обещало бы контроль, которого нет.
     """
-    rows = session.scalars(
-        select(Ingredient)
-        .where(Ingredient.is_active, Ingredient.low_stock_threshold > 0)
-    ).all()
-    stock = [
-        StockRow(name=i.name, unit=i.unit, stock_qty=i.stock_qty,
-                 threshold=i.low_stock_threshold)
-        for i in rows
-    ]
-    stock.sort(key=lambda s: s.pct)
-    return stock[:limit]
+    rows = [r for r in inv.stock_rows(session) if r.tracked and r.low_stock_threshold > 0]
+    rows.sort(key=lambda r: r.stock_qty / r.low_stock_threshold)
+    return rows[:limit]
 
 
 def _hours(today_rows: list[rs.HourRow], yesterday_rows: list[rs.HourRow],
