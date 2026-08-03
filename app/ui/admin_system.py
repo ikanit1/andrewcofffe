@@ -10,6 +10,7 @@
 """
 import asyncio
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 from nicegui import ui
@@ -347,11 +348,127 @@ def admin_system_page() -> None:
             with ui.row().classes("gap-2 flex-wrap"):
                 ui.button("Сделать копию сейчас", icon="backup",
                           on_click=_do_backup).props("no-caps")
+                ui.button("Восстановить из копии", icon="restore",
+                          on_click=_restore_dialog).props("outline no-caps")
                 _maint_button("Убрать старые копии", "delete_sweep",
                               maint.cleanup_backups, "Чистка копий базы")
             ui.label("Ручные копии (pos-before-*.db) чистка не трогает: их делают перед "
                      "обновлением, и именно к ним возвращаются, если что-то пошло не так.") \
                 .classes("text-xs").style("color: var(--text-secondary)")
+
+    def _restore_dialog() -> None:
+        """Разворачивает копию поверх рабочей базы — из папки backups или из файла.
+
+        Копию сначала показываем: сколько в ней чеков и товаров, за какое число.
+        Подменить базу вслепую — самый быстрый способ потерять день работы.
+        """
+        from app.config import settings
+        from app.services import backup_service as bs
+
+        chosen: dict[str, object] = {"path": None, "check": None}
+
+        with ui.dialog().props("persistent") as dlg, \
+                ui.card().classes("gap-3 w-full").style("max-width:560px"):
+            ui.label("Восстановление из копии").classes("text-lg font-bold")
+            ui.label("База будет заменена целиком. Перед подменой снимается копия "
+                     "текущей базы, и касса перезапустится.").classes("text-sm") \
+                .style("color: var(--text-secondary)")
+
+            local = sorted(Path(settings.backups_dir).glob("pos-*.db"),
+                           key=lambda f: f.stat().st_mtime, reverse=True) \
+                if Path(settings.backups_dir).exists() else []
+            if local:
+                options = {
+                    str(f): f"{f.name} · "
+                            f"{datetime.fromtimestamp(f.stat().st_mtime):%d.%m %H:%M} · "
+                            f"{format_bytes(f.stat().st_size)}"
+                    for f in local[:20]
+                }
+                picker = ui.select(options, label="Копия из папки backups") \
+                    .props("outlined dense").classes("w-full")
+                picker.on_value_change(lambda e: _pick(Path(e.value)) if e.value else None)
+
+            ui.label("…или загрузите файл .db, присланный ботом в Telegram") \
+                .classes("text-sm").style("color: var(--text-secondary)")
+            ui.upload(
+                label="Выбрать файл копии", auto_upload=True,
+                max_file_size=300 * 1024 * 1024,
+                on_upload=lambda e: _uploaded(e),
+            ).props("accept=.db flat bordered").classes("w-full")
+
+            info = ui.column().classes("w-full gap-1")
+            actions = ui.row().classes("gap-2 w-full justify-end")
+
+            def _pick(path: Path) -> None:
+                check = bs.inspect_backup(path)
+                chosen.update(path=path, check=check)
+                _render_check()
+
+            def _uploaded(event) -> None:
+                target = Path(settings.backups_dir) / "restore-upload.db"
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(event.content.read())
+                ui.notify(f"Файл получен: {event.name}", color="green")
+                _pick(target)
+
+            def _render_check() -> None:
+                info.clear()
+                check = chosen["check"]
+                actions.clear()
+                with actions:
+                    ui.button("Отмена", on_click=dlg.close).props("flat no-caps")
+                    if check is not None and check.ok:
+                        ui.button("Восстановить", icon="restore", color="negative",
+                                  on_click=_confirm).props("no-caps")
+                if check is None:
+                    return
+                with info:
+                    if check.problems:
+                        for problem in check.problems:
+                            ui.label(f"• {problem}").classes("text-sm") \
+                                .style("color: var(--status-danger)")
+                        return
+                    with ui.row().classes("w-full gap-4 flex-wrap p-3 rounded-xl") \
+                            .style("background: var(--surface-sunken)"):
+                        for label, value in check.counts:
+                            with ui.column().classes("gap-0"):
+                                ui.label(label).classes("text-xs") \
+                                    .style("color: var(--text-secondary)")
+                                ui.label(str(value)).classes("text-base font-bold")
+                    stamp = (f"{check.created_at:%d.%m.%Y %H:%M}"
+                             if check.created_at else "дата неизвестна")
+                    ui.label(f"{stamp} · {format_bytes(check.size_bytes)}") \
+                        .classes("text-xs").style("color: var(--text-secondary)")
+
+            def _confirm() -> None:
+                path = chosen["path"]
+                if path is None:
+                    return
+                dlg.close()
+                confirm_with_pin(
+                    title="Замена базы",
+                    question="Текущая база будет заменена копией, касса перезапустится.",
+                    action_label="Заменить базу",
+                    on_confirm=lambda: _do_restore(Path(str(path))),
+                )
+
+            _render_check()
+        dlg.open()
+
+    def _do_restore(path: Path) -> None:
+        from app.services import backup_service as bs
+
+        result = bs.restore_from_file(path)
+        if not result.ok:
+            ui.notify(result.message, color="red", multi_line=True, timeout=10000)
+            return
+        ui.notify(result.message + " Касса перезапускается…", color="green",
+                  multi_line=True, timeout=8000)
+        if updater.is_supervised():
+            updater.schedule_restart()
+        else:
+            ui.notify("Перезапустите кассу вручную, чтобы она открыла новую базу.",
+                      color="orange", multi_line=True, timeout=10000)
 
     async def _do_backup() -> None:
         from app.services.backup_service import run_backup_once
