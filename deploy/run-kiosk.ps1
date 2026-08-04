@@ -1,4 +1,4 @@
-﻿# Ждём готовности сервера и открываем кассу на весь экран (режим киоска).
+﻿# Ждём готовности сервера и открываем кассу отдельным окном браузера.
 # Ищем Edge, затем Chrome; если браузера нет — открываем окно по умолчанию.
 $ErrorActionPreference = "SilentlyContinue"
 $url = "http://localhost:8080"
@@ -46,25 +46,33 @@ if (-not $browser) {
     return
 }
 
-# Отдельный профиль: если браузер уже открыт с обычным профилем, окно киоска
-# без этого прицепится к нему обычной вкладкой и на весь экран не развернётся.
+# Отдельный профиль: если браузер уже открыт с обычным профилем, окно кассы
+# без этого прицепится к нему обычной вкладкой со всей обвязкой браузера.
+# Имя каталога оставлено прежним (kiosk-profile): по нему касса ищет своё окно
+# и здесь, и в status.ps1, а переименование бросило бы уже заведённый профиль.
 $profileDir = Join-Path $Env:LOCALAPPDATA "CoffeePOS\kiosk-profile"
 if (-not (Test-Path $profileDir)) { New-Item -ItemType Directory -Path $profileDir -Force | Out-Null }
 
-# Киоск уже открыт? Второй экземпляр с тем же профилем не займёт его и сразу
+# Окно кассы уже открыто? Второй экземпляр с тем же профилем не займёт его и сразу
 # закроется — со стороны это выглядит как «окно мигнуло и пропало».
 $running = Get-CimInstance Win32_Process -Filter "Name='chrome.exe' OR Name='msedge.exe'" |
     Where-Object { $_.CommandLine -like "*CoffeePOS*kiosk-profile*" }
 if ($running) { return }
 
 # Не $args: это служебная переменная PowerShell, её переопределение ненадёжно
+#
+# --app вместо --kiosk: окно по-прежнему без вкладок и адресной строки, но это
+# обычное окно, а не полноэкранный захват. Киоск отбирал экран целиком — до
+# панели задач и до других программ на моноблоке было не добраться, выйти можно
+# было только через Alt+F4. Развёрнутым окно открывается сразу, так что рабочая
+# площадь та же, а свернуть или закрыть его теперь можно как любое другое.
 $browserArgs = @(
-    "--kiosk", $url,
+    "--app=$url",
+    "--start-maximized",
     "--user-data-dir=$profileDir",
     "--no-first-run",
     "--no-default-browser-check",
     "--disable-features=TranslateUI"
 )
-if ($browser.Kind -eq "edge") { $browserArgs += "--edge-kiosk-type=fullscreen" }
 
 & $browser.Path @browserArgs

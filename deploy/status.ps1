@@ -62,14 +62,14 @@ try {
     Bad "не отвечает: $($_.Exception.Message)"
 }
 
-# --- Киоск ----------------------------------------------------------------
-Head "Окно кассы (киоск):"
+# --- Окно кассы -------------------------------------------------------------
+Head "Окно кассы:"
 $kiosk = Get-CimInstance Win32_Process -Filter "Name='chrome.exe' OR Name='msedge.exe'" |
     Where-Object { $_.CommandLine -like "*CoffeePOS*kiosk-profile*" }
 if ($kiosk) {
     $main = $kiosk | Sort-Object CreationDate | Select-Object -First 1
     Ok "открыто — $($main.Name), запущено $(([datetime]$main.CreationDate).ToString('HH:mm')), процессов $(($kiosk | Measure-Object).Count)"
-    Write-Host "        закрыть: Alt+F4" -ForegroundColor DarkGray
+    Write-Host "        закрыть: Alt+F4, свернуть — как у обычного окна" -ForegroundColor DarkGray
 } else {
     Warn "окно кассы закрыто (сервер при этом может работать)"
 }

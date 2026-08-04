@@ -40,5 +40,5 @@ if (-not $busy) {
     Write-Host "Сервер уже работает." -ForegroundColor Green
 }
 
-# run-kiosk.ps1 сам ждёт готовности сервера и открывает браузер на весь экран
+# run-kiosk.ps1 сам ждёт готовности сервера и открывает окно кассы
 & (Join-Path $PSScriptRoot "run-kiosk.ps1")
